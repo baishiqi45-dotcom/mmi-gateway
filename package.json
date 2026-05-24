@@ -1,0 +1,91 @@
+{
+  "name": "@mmi/gateway",
+  "version": "0.3.0",
+  "description": "Provider-neutral multimodal intake gateway for candidate evidence packets.",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/baishiqi45-dotcom/mmi-gateway#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/baishiqi45-dotcom/mmi-gateway.git"
+  },
+  "bugs": {
+    "url": "https://github.com/baishiqi45-dotcom/mmi-gateway/issues"
+  },
+  "keywords": [
+    "multimodal",
+    "intake",
+    "evidence",
+    "provenance",
+    "agent",
+    "ai-agent",
+    "source-review",
+    "provider-adapter",
+    "typescript",
+    "cli"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "mmi": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./providers": {
+      "types": "./dist/providers/index.d.ts",
+      "import": "./dist/providers/index.js"
+    },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js"
+    },
+    "./schema.json": "./schemas/v1/candidate-packet.schema.json",
+    "./source-manifest.schema.json": "./schemas/v1/source-manifest.schema.json",
+    "./cli-result.schema.json": "./schemas/v1/cli-result.schema.json"
+  },
+  "files": [
+    "dist",
+    "schemas",
+    "docs",
+    "examples",
+    "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "CODE_OF_CONDUCT.md",
+    "PROVIDER_AUTHORING.md",
+    "CONFIGURATION.md",
+    "SECURITY.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "rm -rf dist node_modules/.cache/tsconfig.build.tsbuildinfo && tsc -p tsconfig.build.json",
+    "doctor": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types src/cli.ts doctor",
+    "ingest:example": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types src/cli.ts ingest --text \"Example project brief requiring source review\" --out tmp/example-run",
+    "pack:dry-run": "npm pack --dry-run",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build && npm pack --dry-run",
+    "schema:refresh": "node -e \"import('./dist/schema.js').then(({candidatePacketJsonSchema,sourceManifestJsonSchema})=>{const fs=require('node:fs');fs.writeFileSync('schemas/v1/candidate-packet.schema.json',JSON.stringify(candidatePacketJsonSchema(),null,2)+'\\n');fs.writeFileSync('schemas/v1/source-manifest.schema.json',JSON.stringify(sourceManifestJsonSchema(),null,2)+'\\n')})\"",
+    "selftest": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types src/cli.ts selftest",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.5"
+  },
+  "engines": {
+    "node": ">=20.18"
+  }
+}

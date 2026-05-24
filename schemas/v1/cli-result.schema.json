@@ -1,0 +1,35 @@
+{
+  "$id": "https://mmi.dev/schemas/1.0.0/cli-result.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MMI Gateway CLI JSON Result",
+  "type": "object",
+  "required": ["schema", "schemaVersion", "gatewayVersion", "ok", "command", "data", "nextCommands"],
+  "additionalProperties": true,
+  "properties": {
+    "schema": {
+      "const": "mmi.gateway.cli_result"
+    },
+    "schemaVersion": {
+      "const": "1.0.0"
+    },
+    "gatewayVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "command": {
+      "type": ["string", "null"]
+    },
+    "data": {
+      "type": "object"
+    },
+    "nextCommands": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

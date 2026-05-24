@@ -1,0 +1,378 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import { runCli } from "./cli.ts";
+
+async function tmpDir(): Promise<string> {
+  return fs.mkdtemp(path.join(os.tmpdir(), "mmi-cli-"));
+}
+
+describe("mmi CLI", () => {
+  it("prints doctor output with default providers", async () => {
+    const result = await runCli(["doctor"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.join("\n")).toContain("MMI_DOCTOR_OK");
+    expect(result.stdout.join("\n")).toContain("manual");
+  });
+
+  it("prints a package version that issue reporters can paste", async () => {
+    const result = await runCli(["--version", "--json"]);
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout.join("\n")) as { schema: string; name: string; version: string; data: { version: string } };
+    expect(parsed).toMatchObject({
+      schema: "mmi.gateway.cli_result",
+      name: "@mmi/gateway",
+    });
+    expect(parsed.version).toMatch(/^\d+\.\d+\.\d+/);
+    expect(parsed.data.version).toBe(parsed.version);
+  });
+
+  it("creates a runnable starter project", async () => {
+    const outputDir = await tmpDir();
+    const configPath = path.join(outputDir, "starter", "mmi.config.json");
+    const init = await runCli(["init", "--starter", "--config", configPath, "--json"]);
+
+    expect(init.exitCode).toBe(0);
+    const parsed = JSON.parse(init.stdout.join("\n")) as { starter: { samplePath: string }; nextCommands: string[] };
+    expect(parsed.nextCommands[0]).toContain("mmi ingest");
+    await expect(fs.stat(configPath)).resolves.toBeDefined();
+    await expect(fs.stat(parsed.starter.samplePath)).resolves.toBeDefined();
+
+    const ingest = await runCli(["ingest", "--config", configPath, "--out", path.join(outputDir, "starter", "run"), "--file", parsed.starter.samplePath, "--json"]);
+    expect(ingest.exitCode).toBe(0);
+    await expect(fs.stat(path.join(outputDir, "starter", "run", "packet.json"))).resolves.toBeDefined();
+  });
+
+  it("ingests text into a portable packet", async () => {
+    const outputDir = await tmpDir();
+    const result = await runCli(["ingest", "--out", outputDir, "--text", "hello intake"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.join("\n")).toContain("MMI_INGEST_HELD");
+    await expect(fs.stat(path.join(outputDir, "packet.json"))).resolves.toBeDefined();
+  });
+
+  it("prints machine-readable ingest results with --json", async () => {
+    const outputDir = await tmpDir();
+    const result = await runCli(["ingest", "--json", "--out", outputDir, "--text", "hello json"]);
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout.join("\n")) as {
+      ok: boolean;
+      schema: string;
+      data: { ok: boolean };
+      nextCommands: string[];
+      manifestPath: string;
+      agentHandoffPath: string;
+    };
+    expect(parsed).toMatchObject({
+      schema: "mmi.gateway.cli_result",
+      ok: true,
+      data: { ok: true },
+      manifestPath: path.join(outputDir, "gateway_manifest.json"),
+      agentHandoffPath: path.join(outputDir, "agent_handoff.md"),
+    });
+    expect(parsed.nextCommands).toEqual(expect.arrayContaining([`mmi validate ${outputDir} --json`]));
+  });
+
+  it("runs a local no-network selftest", async () => {
+    const result = await runCli(["selftest", "--json"]);
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout.join("\n")) as { ok: boolean; checks: Array<{ id: string; ok: boolean }> };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "ingest_json", ok: true }),
+        expect.objectContaining({ id: "secret_fail_closed", ok: true }),
+      ]),
+    );
+  });
+
+  it("publishes small integration recipes for downstream agents", async () => {
+    const result = await runCli(["recipes", "--json"]);
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout.join("\n")) as {
+      schema: string;
+      command: string;
+      recipes: Array<{ id: string; commands: string[] }>;
+      nextCommands: string[];
+    };
+    expect(parsed).toMatchObject({
+      schema: "mmi.gateway.cli_result",
+      command: "recipes",
+    });
+    expect(parsed.recipes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "manual-first-run" }),
+        expect.objectContaining({ id: "agent-jsonl-intake" }),
+        expect.objectContaining({ id: "custom-provider-module" }),
+      ]),
+    );
+  });
+
+  it("keeps the documented agent JSON flow stable", async () => {
+    const outputDir = await tmpDir();
+    const runDir = path.join(outputDir, "agent-run");
+    const sourcePath = path.join(outputDir, "sources.jsonl");
+    await fs.writeFile(
+      sourcePath,
+      JSON.stringify({ id: "agent_brief", type: "text", text: "Agent flow source.", privacy: "synthetic" }) + "\n",
+      "utf8",
+    );
+
+    const commands = [
+      await runCli(["doctor", "--json"]),
+      await runCli(["selftest", "--json"]),
+      await runCli(["ingest", "--sources", sourcePath, "--out", runDir, "--dry-run", "--json"]),
+      await runCli(["ingest", "--sources", sourcePath, "--out", runDir, "--json"]),
+      await runCli(["validate", runDir, "--json"]),
+      await runCli(["handoff", runDir, "--json"]),
+    ];
+
+    for (const result of commands) {
+      expect(result.exitCode).toBe(0);
+      const parsed = JSON.parse(result.stdout.join("\n")) as {
+        schema: string;
+        gatewayVersion: string;
+        ok: boolean;
+        nextCommands: string[];
+      };
+      expect(parsed.schema).toBe("mmi.gateway.cli_result");
+      expect(parsed.gatewayVersion).toMatch(/^\d+\.\d+\.\d+/);
+      expect(parsed.ok).toBe(true);
+      expect(Array.isArray(parsed.nextCommands)).toBe(true);
+    }
+    await expect(fs.stat(path.join(runDir, "gateway_manifest.json"))).resolves.toBeDefined();
+  });
+
+  it("ingests a source manifest without losing source metadata", async () => {
+    const outputDir = await tmpDir();
+    const sourceFile = path.join(outputDir, "sources.json");
+    await fs.writeFile(
+      sourceFile,
+      JSON.stringify({
+        sources: [
+          {
+            id: "customer_brief",
+            type: "text",
+            text: "Manifest source.",
+            rights: "restricted",
+            privacy: "project_private",
+            metadata: { sourceSystem: "crm" },
+          },
+        ],
+      }),
+      "utf8",
+    );
+
+    const result = await runCli(["ingest", "--out", outputDir, "--sources-json", sourceFile]);
+
+    expect(result.exitCode).toBe(0);
+    const packet = JSON.parse(await fs.readFile(path.join(outputDir, "packet.json"), "utf8")) as {
+      sources: Array<{ id: string; metadata: Record<string, unknown>; rights: string }>;
+    };
+    expect(packet.sources[0]).toMatchObject({
+      id: "customer_brief",
+      rights: "restricted",
+      metadata: { sourceSystem: "crm" },
+    });
+  });
+
+  it("ingests a JSONL source manifest for streaming agents", async () => {
+    const outputDir = await tmpDir();
+    const sourceFile = path.join(outputDir, "sources.jsonl");
+    await fs.writeFile(
+      sourceFile,
+      [
+        JSON.stringify({ id: "first", type: "text", text: "First JSONL source.", privacy: "synthetic" }),
+        JSON.stringify({ id: "second", type: "text", text: "Second JSONL source.", rights: "restricted" }),
+      ].join("\n"),
+      "utf8",
+    );
+
+    const result = await runCli(["ingest", "--out", outputDir, "--sources", sourceFile, "--json"]);
+
+    expect(result.exitCode).toBe(0);
+    const packet = JSON.parse(await fs.readFile(path.join(outputDir, "packet.json"), "utf8")) as {
+      sources: Array<{ id: string; rights: string }>;
+    };
+    expect(packet.sources.map((source) => source.id)).toEqual(["first", "second"]);
+    expect(packet.sources[1]?.rights).toBe("restricted");
+  });
+
+  it("keeps PDF files pointer-only instead of reading them as UTF-8 text", async () => {
+    const outputDir = await tmpDir();
+    const pdfPath = path.join(outputDir, "brief.pdf");
+    await fs.writeFile(pdfPath, Buffer.from([0x25, 0x50, 0x44, 0x46, 0x00, 0xff]));
+
+    const result = await runCli(["ingest", "--out", outputDir, "--file", pdfPath]);
+
+    expect(result.exitCode).toBe(0);
+    const packet = JSON.parse(await fs.readFile(path.join(outputDir, "packet.json"), "utf8")) as {
+      sources: Array<{ type: string; text?: string }>;
+    };
+    expect(packet.sources[0]).toMatchObject({ type: "document" });
+    expect(packet.sources[0]?.text).toBeUndefined();
+  });
+
+  it("reports config and preflight issues through stable JSON", async () => {
+    const outputDir = await tmpDir();
+    const configPath = path.join(outputDir, "mmi.config.json");
+    const sourcePath = path.join(outputDir, "brief.txt");
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({
+        defaultProvider: "manual",
+        policy: { maxSourceBytes: 2 },
+        providers: [{ type: "manual" }],
+      }),
+      "utf8",
+    );
+    await fs.writeFile(sourcePath, "larger than two bytes", "utf8");
+
+    const result = await runCli(["ingest", "--json", "--config", configPath, "--out", outputDir, "--file", sourcePath]);
+
+    expect(result.exitCode).toBe(1);
+    const parsed = JSON.parse(result.stdout.join("\n")) as { ok: boolean; issues: Array<{ code: string }> };
+    expect(parsed.ok).toBe(false);
+    expect(parsed.issues).toEqual([expect.objectContaining({ code: "source_too_large" })]);
+  });
+
+  it("validates a written packet", async () => {
+    const outputDir = await tmpDir();
+    await runCli(["ingest", "--out", outputDir, "--text", "hello intake"]);
+
+    const result = await runCli(["validate", outputDir]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("MMI_VALIDATE_HELD");
+  });
+
+  it("prints the versioned candidate packet schema", async () => {
+    const result = await runCli(["schema", "--kind", "candidate-packet"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.join("\n")).toContain("mmi.gateway.packet");
+    expect(result.stdout.join("\n")).toContain("not_source_truth");
+  });
+
+  it("prints the versioned source manifest schema", async () => {
+    const result = await runCli(["schema", "--kind", "source-manifest"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.join("\n")).toContain("mmi.gateway.source_manifest");
+    expect(result.stdout.join("\n")).toContain("sources");
+  });
+
+  it("prints the source manifest schema", async () => {
+    const result = await runCli(["schema", "source-manifest"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.join("\n")).toContain("source-manifest.schema.json");
+    expect(result.stdout.join("\n")).toContain("sources");
+  });
+
+  it("explains issue recovery without needing a provider", async () => {
+    const result = await runCli(["explain", "secret_leak_risk", "--json"]);
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout.join("\n")) as { code: string; recovery: string; severity: string };
+    expect(parsed).toMatchObject({
+      code: "secret_leak_risk",
+      severity: "error",
+    });
+    expect(parsed.recovery).toContain("Remove secrets");
+  });
+
+  it("emits a provider-free dry-run plan", async () => {
+    const outputDir = await tmpDir();
+    const configPath = path.join(outputDir, "mmi.config.json");
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({
+        defaultProvider: "openai-compatible",
+        providers: [
+          {
+            type: "openai-compatible",
+            id: "openai-compatible",
+            apiKeyEnv: "MISSING_COMPAT_KEY",
+            model: "demo-model",
+            baseUrl: "https://provider.example/v1",
+          },
+        ],
+      }),
+      "utf8",
+    );
+
+    const result = await runCli(["ingest", "--dry-run", "--json", "--config", configPath, "--out", outputDir, "--text", "plan only"]);
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout.join("\n")) as { mode: string; wouldCallProviders: boolean; selectedProvider: string };
+    expect(parsed).toMatchObject({
+      mode: "dry-run-plan",
+      wouldCallProviders: false,
+      selectedProvider: "openai-compatible",
+    });
+  });
+
+  it("returns a machine-readable handoff summary", async () => {
+    const outputDir = await tmpDir();
+    await runCli(["ingest", "--out", outputDir, "--text", "handoff source"]);
+
+    const result = await runCli(["handoff", outputDir, "--json"]);
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout.join("\n")) as {
+      command: string;
+      counts: { sources: number };
+      boundary: { sourceMatrixBound: boolean };
+      nextActions: Array<{ id: string }>;
+      handoff: string;
+    };
+    expect(parsed).toMatchObject({
+      command: "handoff",
+      counts: { sources: 1 },
+      boundary: { sourceMatrixBound: false },
+    });
+    expect(parsed.nextActions).toEqual(expect.arrayContaining([expect.objectContaining({ id: "validate" })]));
+    expect(parsed.handoff).toContain("## Snapshot");
+    expect(parsed.handoff).toContain("## Suggested Agent Actions");
+  });
+
+  it("validates a run_error directory as a blocked result", async () => {
+    const outputDir = await tmpDir();
+    await runCli([
+      "ingest",
+      "--out",
+      outputDir,
+      "--sources-json",
+      path.join(outputDir, "missing.json"),
+      "--json",
+    ]);
+    await fs.writeFile(
+      path.join(outputDir, "run_error.json"),
+      JSON.stringify({
+        schema: "mmi.gateway.run_error",
+        schemaVersion: "1.0.0",
+        status: "blocked_before_packet_write",
+        issues: [{ code: "secret_leak_risk", message: "Secret-like value was blocked." }],
+      }),
+      "utf8",
+    );
+
+    const result = await runCli(["validate", outputDir, "--json"]);
+
+    expect(result.exitCode).toBe(1);
+    const parsed = JSON.parse(result.stdout.join("\n")) as { ok: boolean; status: string; issues: Array<{ code: string }> };
+    expect(parsed).toMatchObject({
+      ok: false,
+      status: "blocked_before_packet_write",
+    });
+    expect(parsed.issues).toEqual([expect.objectContaining({ code: "secret_leak_risk" })]);
+  });
+});

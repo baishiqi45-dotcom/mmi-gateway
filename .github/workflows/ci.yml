@@ -1,0 +1,88 @@
+name: MMI Gateway CI
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "docs/**"
+      - "examples/**"
+      - "schemas/**"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig*.json"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/publish.yml"
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "docs/**"
+      - "examples/**"
+      - "schemas/**"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig*.json"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/publish.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  mmi-gateway:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["20.18.0", "22", "24"]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: node dist/cli.js doctor
+      - run: node dist/cli.js selftest --json
+      - run: node dist/cli.js recipes --json
+      - run: npm pack --dry-run
+      - name: Test packed package as a consumer
+        if: matrix.node-version == '24'
+        run: |
+          set -euo pipefail
+          TARBALL="$(npm pack --silent)"
+          TMP="$(mktemp -d)"
+          cp "$TARBALL" "$TMP/"
+          rm -f "$TARBALL"
+          cd "$TMP"
+          npm init -y >/dev/null
+          npm install "./$(basename "$TARBALL")"
+          npx mmi --version --json
+          npx mmi doctor --json
+          npx mmi selftest --json
+          npx mmi init --starter --config ./starter/mmi.config.json --json
+          npx mmi ingest --config ./starter/mmi.config.json --out ./starter/run --file ./starter/sources/starter.md --dry-run --json
+          npx mmi ingest --config ./starter/mmi.config.json --out ./starter/run --file ./starter/sources/starter.md --json
+          npx mmi validate ./starter/run --json
+          npx mmi handoff ./starter/run --json
+          npx mmi recipes --json
+          printf '%s\n' '{"id":"jsonl_brief","type":"text","text":"jsonl tarball smoke","privacy":"synthetic"}' > sources.jsonl
+          npx mmi ingest --sources ./sources.jsonl --out ./jsonl-run --json
+          npx mmi ingest --out ./run --text "tarball consumer smoke" --json
+          npx mmi validate ./run --json
+          npx mmi handoff ./run --json
+          npx mmi explain secret_leak_risk --json
+          npx mmi schema --kind source-manifest >/tmp/mmi-source-manifest.schema.json
+          test -f node_modules/@mmi/gateway/docs/RECIPES.md
+          cp -R node_modules/@mmi/gateway/examples/custom-provider-module ./custom-provider-module
+          npx mmi doctor --config ./custom-provider-module/mmi.config.json --json
+          npx mmi ingest --config ./custom-provider-module/mmi.config.json --sources ./custom-provider-module/sources.jsonl --out ./module-run --json
+          npx mmi validate ./module-run --json
+          npm install --save-dev typescript
+          cp "$GITHUB_WORKSPACE/examples/sdk-basic.ts" ./sdk-basic.ts
+          cp "$GITHUB_WORKSPACE/examples/signed-url-storage.ts" ./signed-url-storage.ts
+          npx tsc --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck --noEmit ./sdk-basic.ts
+          npx tsc --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck --noEmit ./signed-url-storage.ts

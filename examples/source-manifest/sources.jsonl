@@ -1,0 +1,2 @@
+{"id":"brief","type":"text","text":"Brief text for JSONL intake.","privacy":"synthetic","rights":"not_reviewed"}
+{"id":"remote_clip","type":"video","uri":"https://cdn.example.test/clip.mp4","privacy":"public","rights":"not_reviewed","provider":"mock"}

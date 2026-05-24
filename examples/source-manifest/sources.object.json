@@ -1,0 +1,16 @@
+{
+  "schema": "mmi.gateway.source_manifest",
+  "schemaVersion": "1.0.0",
+  "sources": [
+    {
+      "id": "customer_brief",
+      "type": "text",
+      "text": "A project brief that needs review before downstream planning.",
+      "privacy": "project_private",
+      "rights": "restricted",
+      "metadata": {
+        "sourceSystem": "crm"
+      }
+    }
+  ]
+}

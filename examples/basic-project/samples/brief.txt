@@ -1,0 +1,1 @@
+Synthetic brief: collect project sources, create a source matrix candidate, and require human review before any downstream use.

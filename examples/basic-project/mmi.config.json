@@ -1,0 +1,14 @@
+{
+  "projectId": "basic-project",
+  "defaultProvider": "manual",
+  "prompt": "Return a concise candidate evidence description. Do not validate the source as fact.",
+  "policy": {
+    "allowLocalMediaUpload": false,
+    "allowDataUrls": false,
+    "requireReview": true
+  },
+  "providers": [
+    { "type": "manual" },
+    { "type": "mock" }
+  ]
+}

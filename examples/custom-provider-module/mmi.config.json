@@ -1,0 +1,12 @@
+{
+  "defaultProvider": "example-module",
+  "providers": [
+    { "type": "manual" },
+    {
+      "type": "module",
+      "id": "example-module",
+      "module": "./provider.mjs",
+      "options": { "id": "example-module" }
+    }
+  ]
+}

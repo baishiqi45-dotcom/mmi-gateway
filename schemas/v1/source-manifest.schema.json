@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "mmi.gateway.source_manifest"
+    },
+    "schemaVersion": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "sources": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "text",
+              "document",
+              "web",
+              "image",
+              "audio",
+              "video",
+              "folder",
+              "other"
+            ]
+          },
+          "uri": {
+            "type": "string",
+            "minLength": 1
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "privacy": {
+            "type": "string",
+            "enum": [
+              "public",
+              "signed_url",
+              "project_private",
+              "synthetic"
+            ]
+          },
+          "rights": {
+            "type": "string",
+            "enum": [
+              "cleared",
+              "not_reviewed",
+              "restricted"
+            ]
+          },
+          "metadata": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "sources"
+  ],
+  "additionalProperties": false,
+  "$id": "https://mmi.dev/schemas/1.0.0/source-manifest.schema.json",
+  "title": "MMI Gateway Source Manifest"
+}

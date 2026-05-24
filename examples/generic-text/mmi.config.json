@@ -1,0 +1,15 @@
+{
+  "projectId": "generic-text-demo",
+  "defaultProvider": "manual",
+  "prompt": "Return candidate evidence for review. Do not validate facts.",
+  "policy": {
+    "allowLocalMediaUpload": false,
+    "allowDataUrls": false,
+    "requireReview": true,
+    "failOnProviderError": false
+  },
+  "providers": [
+    { "type": "manual" },
+    { "type": "mock" }
+  ]
+}

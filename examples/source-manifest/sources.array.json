@@ -1,0 +1,9 @@
+[
+  {
+    "id": "public_page",
+    "type": "web",
+    "uri": "https://example.com/project",
+    "privacy": "public",
+    "rights": "not_reviewed"
+  }
+]

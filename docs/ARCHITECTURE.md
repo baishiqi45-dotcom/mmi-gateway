@@ -84,7 +84,13 @@ Each successful write emits one canonical directory dialect:
 Older alternate writer names are not part of the public contract.
 
 `mmi ingest-project` additionally writes local project intake artifacts such as
-`project_intake_manifest.json`, `visual_asset_library.json`,
+`START_HERE.md`, `project_intake_manifest.json`,
+`top_review_targets.jsonl`, `visual_asset_library.json`,
 `video_window_review_matrix.json`, `atoms.ndjson`,
-`project_foundation_candidate.json`, `human_review_surface.md`, and
-`gap_and_blocker_report.md`.
+`review_decisions.template.jsonl`, `project_foundation_candidate.json`,
+`human_review_surface.md`, and `gap_and_blocker_report.md`.
+
+Project-folder discovery tags sources as `raw_capture`, `original_media`,
+`derived_frame`, `derived_sidecar`, `generated_artifact`, `project_note`, or
+`unknown`. Review surfaces prefer raw captures and original media first while
+keeping derived material visible as support evidence.

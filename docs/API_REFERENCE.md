@@ -55,6 +55,23 @@ These helpers power `mmi ingest-project`. They are local-first and file-based:
 they can call local `ffprobe`/`ffmpeg` when available, but they do not upload
 local private media or promote project truth.
 
+`discoverProjectSources()` classifies local files with `originKind`,
+`assetRole`, and `assetRoleReason` metadata. Project intake artifacts use those
+fields to place raw captures and original media ahead of derived frames,
+generated artifacts, and project-note sidecars.
+
+## Project Review Decisions
+
+```ts
+import { applyReviewDecisions, summarizeReviewQueue } from "@mmi/gateway";
+
+const queue = await summarizeReviewQueue("./project/.mmi");
+const summary = await applyReviewDecisions("./project/.mmi", "./project/.mmi/review_decisions.template.jsonl");
+```
+
+The review decision helper writes summaries such as `accepted_atoms.jsonl` and
+`review_decision_summary.json` without mutating `packet.json`.
+
 ## CLI JSON Contract
 
 All `--json` CLI responses include:

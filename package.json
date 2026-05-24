@@ -1,6 +1,6 @@
 {
   "name": "@mmi/gateway",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Provider-neutral multimodal intake gateway for candidate evidence packets.",
   "type": "module",
   "license": "MIT",

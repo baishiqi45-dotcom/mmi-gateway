@@ -10,6 +10,8 @@ This package is structured so it can become a standalone open-source project.
 - CLI recipe discovery with `mmi recipes --json`.
 - Agent-readable `--json`, `nextCommands`, `--sources-json`, `--sources` JSONL,
   `--stdin-json`, `--stdin-jsonl`, `handoff`, and `explain` surfaces.
+- Local project-folder intake with raw/derived/generated source classification,
+  top review targets, and a file-based review decision loop.
 - SDK entry points with typed providers and stable packet readers/writers.
 - Versioned JSON Schema at `schemas/v1/candidate-packet.schema.json`.
 - Source manifest JSON Schema for upstream systems.
@@ -23,6 +25,8 @@ This package is structured so it can become a standalone open-source project.
 - ASR/transcription pipelines are provider or storage extensions, not core.
 - Provider observations are candidate perceptions, not validation.
 - Project-specific adapters should live outside the core package.
+- `mmi review` summarizes decisions but does not certify truth or mutate
+  `packet.json`.
 
 ## Release Checklist
 

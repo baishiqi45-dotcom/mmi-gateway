@@ -35,7 +35,19 @@ export type DiscoveredSource = SourceInput & {
     mtimeIso: string;
     extension: string;
     discovery: "project_dir";
+    originKind: ProjectSourceOriginKind;
+    assetRole: ProjectSourceAssetRole;
+    assetRoleReason: string;
   };
+};
+
+export type ProjectSourceOriginKind = "raw" | "derived" | "generated" | "project_note" | "unknown";
+export type ProjectSourceAssetRole = "raw_capture" | "original_media" | "derived_frame" | "derived_sidecar" | "generated_artifact" | "project_note" | "unknown";
+
+export type ProjectSourceClassification = {
+  originKind: ProjectSourceOriginKind;
+  assetRole: ProjectSourceAssetRole;
+  reason: string;
 };
 
 export type DiscoverySkippedItem = {
@@ -73,6 +85,61 @@ export function inferSourceTypeFromPath(filePath: string): SourceType {
 
 export function isTextReadableProjectFile(filePath: string): boolean {
   return TEXT_EXTENSIONS.has(path.extname(filePath).toLowerCase());
+}
+
+function normalizeRelativePath(relativePath: string): string {
+  return relativePath.split(path.sep).join("/");
+}
+
+export function classifyProjectSource(relativePath: string, type: SourceType): ProjectSourceClassification {
+  const normalized = normalizeRelativePath(relativePath);
+  const lower = normalized.toLowerCase();
+  const segments = lower.split("/");
+
+  if (
+    segments.includes(".mmi") ||
+    segments.some((segment) => /^mmi_gateway_intake/i.test(segment)) ||
+    lower.includes("visual_contact_sheet") ||
+    lower.includes("project_intake_manifest") ||
+    lower.includes("gateway_manifest") ||
+    lower.includes("review_queue") ||
+    lower.includes("review_decisions") ||
+    lower.includes("top_review_targets")
+  ) {
+    return { originKind: "generated", assetRole: "generated_artifact", reason: "known_mmi_or_generated_output_path" };
+  }
+
+  if (/(^|\/)field_video_intake\/(frames|keyframes|frames_[^/]*|.*frames.*)(\/|$)/i.test(lower) || /(^|\/)(frames|keyframes)(\/|$)/i.test(lower)) {
+    return { originKind: "derived", assetRole: "derived_frame", reason: "frame_or_keyframe_directory" };
+  }
+
+  if (/(^|\/)(asr|transcript|transcripts|字幕|转写|audio_transcript)(\/|_|-|\.)/i.test(lower) || /(transcript|asr).*\.jsonl?$/i.test(lower)) {
+    return { originKind: "derived", assetRole: "derived_sidecar", reason: "transcript_or_asr_sidecar" };
+  }
+
+  if (/(^|\/)(photo_review|review_surface|contact_sheet|derived|proxy|thumbs?|previews?)(\/|$)/i.test(lower)) {
+    return { originKind: "generated", assetRole: "generated_artifact", reason: "generated_or_review_artifact_directory" };
+  }
+
+  if (type === "video" || type === "audio") {
+    return { originKind: "raw", assetRole: "original_media", reason: "original_audio_or_video_file" };
+  }
+
+  if (type === "image") {
+    if (/实拍|原始|raw|capture|camera|photo|photos|images|img[_-]?\d|img\d|dsc[_-]?\d/i.test(normalized)) {
+      return { originKind: "raw", assetRole: "raw_capture", reason: "raw_capture_path_or_camera_filename" };
+    }
+    if (normalized.startsWith("00_PROJECT_FOUNDATION") || normalized.startsWith("00_")) {
+      return { originKind: "unknown", assetRole: "unknown", reason: "image_inside_project_notes_area" };
+    }
+    return { originKind: "raw", assetRole: "raw_capture", reason: "image_file_default_raw_candidate" };
+  }
+
+  if (type === "document") {
+    return { originKind: "project_note", assetRole: "project_note", reason: "document_or_text_project_note" };
+  }
+
+  return { originKind: "unknown", assetRole: "unknown", reason: "unclassified_project_source" };
 }
 
 function sourcePrefix(type: SourceType): string {
@@ -200,12 +267,16 @@ export async function discoverProjectSources(rootPath: string, options: ProjectD
         continue;
       }
       const sequence = sources.length + 1;
+      const classification = classifyProjectSource(relativePath, type);
       const metadata: DiscoveredSource["metadata"] = {
         relativePath,
         sizeBytes: stat.size,
         mtimeIso: stat.mtime.toISOString(),
         extension: path.extname(absolute).toLowerCase(),
         discovery: "project_dir",
+        originKind: classification.originKind,
+        assetRole: classification.assetRole,
+        assetRoleReason: classification.reason,
       };
       if (options.hashFiles) metadata.sha256 = await maybeHashFile(absolute);
       const rawText = await maybeReadText(absolute, stat.size, maxTextBytes);

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0
+
+- Added raw/derived/generated project source classification for local folder intake.
+- Added raw-first visual prioritization so original captures outrank derived video frames and generated artifacts.
+- Added `START_HERE.md`, `START_HERE.json`, `top_review_targets.jsonl`, and `review_decisions.template.jsonl` project intake outputs.
+- Added `mmi review` to summarize review queues and apply filled review decision files without mutating `packet.json`.
+- Changed project intake keyframe extraction to opt-in with `--extract-keyframes`.
+- Hardened `ingest-project --json` error handling, dry-run replay options, preview truncation flags, and provider mode reporting.
+
 ## 0.4.0
 
 - Added `mmi ingest-project <folder>` for local-first project folder intake.

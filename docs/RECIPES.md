@@ -44,21 +44,40 @@ than "consume a hand-built source manifest":
 npx @mmi/gateway ingest-project ./my-project \
   --profile creative-project \
   --out ./my-project/.mmi \
+  --dry-run \
+  --json
+
+npx @mmi/gateway ingest-project ./my-project \
+  --profile creative-project \
+  --out ./my-project/.mmi \
   --json
 ```
 
 Start with:
 
+- `.mmi/START_HERE.md`
+- `.mmi/top_review_targets.jsonl`
 - `.mmi/human_review_surface.md`
 - `.mmi/visual_contact_sheet.html`
 - `.mmi/video_window_review_matrix.json`
 - `.mmi/atoms.ndjson`
+- `.mmi/review_decisions.template.jsonl`
 - `.mmi/project_foundation_candidate.json`
 - `.mmi/gap_and_blocker_report.md`
 
 By default this route is local-first. It may call local `ffprobe`/`ffmpeg` when
 available, but it does not upload local private media to a provider. Use
 `--dry-run --json` first to inspect discovered files without writing output.
+Keyframe extraction is opt-in with `--extract-keyframes`.
+
+To turn review into structured files:
+
+```bash
+npx @mmi/gateway review ./my-project/.mmi --json
+npx @mmi/gateway review ./my-project/.mmi \
+  --decisions ./my-project/.mmi/review_decisions.template.jsonl \
+  --json
+```
 
 ## Remote Media URL
 

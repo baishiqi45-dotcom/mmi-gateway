@@ -29,17 +29,27 @@ Local project-folder intake, no API key:
 npx @mmi/gateway ingest-project ./my-project \
   --profile creative-project \
   --out ./my-project/.mmi \
+  --dry-run \
+  --json
+
+npx @mmi/gateway ingest-project ./my-project \
+  --profile creative-project \
+  --out ./my-project/.mmi \
   --json
 ```
 
 This creates the usual candidate packet plus practical local review artifacts:
 
 - `project_intake_manifest.json`
+- `START_HERE.md`
+- `START_HERE.json`
 - `visual_asset_library.json`
 - `visual_contact_sheet.html`
 - `video_window_review_matrix.json`
+- `top_review_targets.jsonl`
 - `atoms.ndjson`
 - `review_queue.jsonl`
+- `review_decisions.template.jsonl`
 - `object_evidence_ledger.json`
 - `term_correction_queue.jsonl`
 - `project_foundation_candidate.json`
@@ -47,9 +57,22 @@ This creates the usual candidate packet plus practical local review artifacts:
 - `gap_and_blocker_report.md`
 
 Local private media is not uploaded automatically. If `ffprobe` or `ffmpeg` is
-available, MMI uses it for local video metadata and optional keyframe
-extraction; otherwise it writes explicit blockers and still produces review
-windows.
+available, MMI uses it for local video metadata. Keyframe extraction is
+opt-in with `--extract-keyframes`; otherwise video windows stay as lightweight
+review scaffolds.
+
+After a project intake run, another agent can start with:
+
+```bash
+npx @mmi/gateway review ./my-project/.mmi --json
+npx @mmi/gateway review ./my-project/.mmi \
+  --decisions ./my-project/.mmi/review_decisions.template.jsonl \
+  --json
+```
+
+`review_decisions.template.jsonl` is a fill-in file. Replace each `decision`
+with `accept`, `edit`, `discard`, or `defer`; MMI writes review summaries
+without mutating `packet.json`.
 
 One-minute starter path:
 
@@ -218,6 +241,7 @@ Helpful CLI utilities:
 
 - `mmi explain <issue-code>` prints the recovery path for an issue.
 - `mmi ingest-project <folder>` scans a local project folder and writes visual/video/project-foundation review artifacts.
+- `mmi review <project-intake-dir>` summarizes or applies filled review decisions.
 - `mmi recipes --json` lists copy-pasteable integration flows.
 - `mmi schema --kind source-manifest` prints the source manifest JSON Schema.
 - `mmi selftest --json` runs a no-network ingest/validate/manifest/secret-fail-closed smoke test.

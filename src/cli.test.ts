@@ -10,11 +10,19 @@ async function tmpDir(): Promise<string> {
 
 async function writeFixtureProject(root: string): Promise<void> {
   await fs.mkdir(path.join(root, "photos"), { recursive: true });
+  await fs.mkdir(path.join(root, "00_PROJECT_FOUNDATION_2026-05-23", "FIELD_VIDEO_INTAKE", "frames", "A"), { recursive: true });
   await fs.mkdir(path.join(root, "video"), { recursive: true });
   await fs.mkdir(path.join(root, ".git"), { recursive: true });
   await fs.writeFile(path.join(root, "brief.md"), "# Specimen Studio\n\nProject note for local intake.\n", "utf8");
   await fs.writeFile(
     path.join(root, "photos", "specimen-table.png"),
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+      "base64",
+    ),
+  );
+  await fs.writeFile(
+    path.join(root, "00_PROJECT_FOUNDATION_2026-05-23", "FIELD_VIDEO_INTAKE", "frames", "A", "A_t000000.jpg"),
     Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
       "base64",
@@ -348,16 +356,51 @@ describe("mmi CLI", () => {
       command: string;
       mode: string;
       counts: { sources: number; image: number; video: number; document: number };
-      sources: Array<{ relativePath: string; type: string }>;
+      sources: Array<{ relativePath: string; type: string; assetRole?: string }>;
       skipped: Array<{ path: string; reason: string }>;
     };
     expect(parsed).toMatchObject({
       command: "ingest-project",
       mode: "dry-run-plan",
-      counts: { sources: 3, image: 1, video: 1, document: 1 },
+      counts: { sources: 4, image: 2, video: 1, document: 1 },
     });
-    expect(parsed.sources).toEqual(expect.arrayContaining([expect.objectContaining({ relativePath: "brief.md" })]));
+    expect(parsed.sources).toEqual(expect.arrayContaining([expect.objectContaining({ relativePath: "brief.md", assetRole: "project_note" })]));
     expect(parsed.skipped).toEqual(expect.arrayContaining([expect.objectContaining({ path: ".git", reason: "ignored_dir" })]));
+  });
+
+  it("fails missing project folders with stable JSON and no output directory", async () => {
+    const root = await tmpDir();
+    const missing = path.join(root, "missing");
+    const outputDir = path.join(root, "out");
+
+    const result = await runCli(["ingest-project", missing, "--out", outputDir, "--json"]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toEqual([]);
+    const parsed = JSON.parse(result.stdout.join("\n")) as { ok: boolean; issues: Array<{ code: string; path: string }> };
+    expect(parsed.ok).toBe(false);
+    expect(parsed.issues).toEqual([expect.objectContaining({ code: "invalid_source", path: missing })]);
+    await expect(fs.stat(outputDir)).rejects.toThrow();
+  });
+
+  it("keeps dry-run replay options and marks truncated previews", async () => {
+    const projectRoot = await tmpDir();
+    await writeFixtureProject(projectRoot);
+
+    const result = await runCli(["ingest-project", projectRoot, "--dry-run", "--exclude", "video", "--max-files", "3", "--preview-sources", "1", "--json"]);
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout.join("\n")) as {
+      replayArgs: string[];
+      sourcesTruncated: boolean;
+      limits: { previewItems: number };
+      nextActions: Array<{ command: string }>;
+    };
+    expect(parsed.replayArgs).toEqual(expect.arrayContaining(["--exclude", "video", "--max-files", "3"]));
+    expect(parsed.sourcesTruncated).toBe(true);
+    expect(parsed.limits.previewItems).toBe(1);
+    expect(parsed.nextActions[0]?.command).toContain("--exclude video");
+    expect(parsed.nextActions[0]?.command).toContain("--max-files 3");
   });
 
   it("writes project intake artifacts that are useful before provider perception", async () => {
@@ -379,29 +422,77 @@ describe("mmi CLI", () => {
     expect(parsed.filesWritten).toEqual(
       expect.arrayContaining([
         path.join(outputDir, "project_intake_manifest.json"),
+        path.join(outputDir, "START_HERE.md"),
+        path.join(outputDir, "START_HERE.json"),
         path.join(outputDir, "visual_asset_library.json"),
         path.join(outputDir, "video_window_review_matrix.json"),
+        path.join(outputDir, "top_review_targets.jsonl"),
         path.join(outputDir, "atoms.ndjson"),
+        path.join(outputDir, "review_decisions.template.jsonl"),
         path.join(outputDir, "human_review_surface.md"),
         path.join(outputDir, "project_foundation_candidate.json"),
       ]),
     );
+    await expect(fs.stat(path.join(outputDir, "keyframes"))).rejects.toThrow();
     await expect(fs.stat(path.join(outputDir, "packet.json"))).resolves.toBeDefined();
     const manifest = JSON.parse(await fs.readFile(parsed.projectManifestPath, "utf8")) as {
       status: string;
       boundary: { providerUpload: string; noTruthPromotion: boolean };
-      entrypoints: { humanReviewSurface: string };
+      entrypoints: { humanReviewSurface: string; topReviewTargets: string; reviewDecisionTemplate: string };
+      counts: { raw_capture: number; derived_frame: number };
     };
     expect(manifest).toMatchObject({
       status: "candidate_review_required",
       boundary: { providerUpload: "blocked_by_default", noTruthPromotion: true },
-      entrypoints: { humanReviewSurface: "human_review_surface.md" },
+      entrypoints: { humanReviewSurface: "human_review_surface.md", topReviewTargets: "top_review_targets.jsonl", reviewDecisionTemplate: "review_decisions.template.jsonl" },
     });
+    expect(manifest.counts.raw_capture).toBe(1);
+    expect(manifest.counts.derived_frame).toBe(1);
+    const visualLibrary = JSON.parse(await fs.readFile(path.join(outputDir, "visual_asset_library.json"), "utf8")) as {
+      assets: Array<{ relativePath: string; assetRole: string; priorityRank: number }>;
+    };
+    expect(visualLibrary.assets[0]).toMatchObject({ relativePath: "photos/specimen-table.png", assetRole: "raw_capture", priorityRank: 1 });
     const reviewSurface = await fs.readFile(parsed.humanReviewSurfacePath, "utf8");
     expect(reviewSurface).toContain("First Visual Review");
     expect(reviewSurface).toContain("First Video Window Review");
+    expect(reviewSurface.indexOf("photos/specimen-table.png")).toBeLessThan(reviewSurface.indexOf("A_t000000.jpg"));
+    const gatewayManifest = JSON.parse(await fs.readFile(path.join(outputDir, "gateway_manifest.json"), "utf8")) as {
+      files: { projectStartHere: string; topReviewTargets: string };
+    };
+    expect(gatewayManifest.files).toMatchObject({ projectStartHere: "START_HERE.md", topReviewTargets: "top_review_targets.jsonl" });
     const blockerReport = await fs.readFile(parsed.blockerReportPath, "utf8");
     expect(blockerReport).toContain("Local private media was not uploaded automatically");
+  });
+
+  it("summarizes project review decisions without mutating the candidate packet", async () => {
+    const projectRoot = await tmpDir();
+    await writeFixtureProject(projectRoot);
+    const outputDir = path.join(projectRoot, ".mmi");
+    await runCli(["ingest-project", projectRoot, "--out", outputDir, "--json"]);
+    const reviewLine = (await fs.readFile(path.join(outputDir, "review_queue.jsonl"), "utf8")).trim().split(/\r?\n/)[0];
+    const reviewItem = JSON.parse(reviewLine) as { id: string; targetAtomId: string };
+    const decisionsPath = path.join(outputDir, "my_decisions.jsonl");
+    await fs.writeFile(
+      decisionsPath,
+      JSON.stringify({
+        reviewItemId: reviewItem.id,
+        targetAtomId: reviewItem.targetAtomId,
+        decision: "accept",
+        reviewerNote: "fixture accept",
+      }) + "\n",
+      "utf8",
+    );
+
+    const result = await runCli(["review", outputDir, "--decisions", decisionsPath, "--json"]);
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout.join("\n")) as { schema: string; ok: boolean; counts: { accepted: number; unknownTargets: number } };
+    expect(parsed.schema).toBe("mmi.gateway.cli_result");
+    expect(parsed.ok).toBe(true);
+    expect(parsed.counts).toMatchObject({ accepted: 1, unknownTargets: 0 });
+    const accepted = await fs.readFile(path.join(outputDir, "accepted_atoms.jsonl"), "utf8");
+    expect(accepted).toContain("fixture accept");
+    await expect(fs.stat(path.join(outputDir, "packet.json"))).resolves.toBeDefined();
   });
 
   it("returns a machine-readable handoff summary", async () => {

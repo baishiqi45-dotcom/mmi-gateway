@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { MMI_GATEWAY_PACKAGE_VERSION, REQUIRED_NON_CLAIMS, type SourceInput, type SourceType } from "./types.ts";
-import type { DiscoveredSource, DiscoverySkippedItem, ProjectDiscoveryResult } from "./source-discovery.ts";
+import type { DiscoveredSource, DiscoverySkippedItem, ProjectDiscoveryResult, ProjectSourceAssetRole, ProjectSourceOriginKind } from "./source-discovery.ts";
 
 export type ProjectIntakeProfile = "creative-project" | "creative_project_foundation" | "field-video-project-base" | "visual-asset-library-only";
 
@@ -43,6 +43,9 @@ type VisualAsset = {
   previewUri: string;
   sizeBytes: number;
   extension: string;
+  originKind: ProjectSourceOriginKind;
+  assetRole: ProjectSourceAssetRole;
+  priorityReason: string;
   width?: number;
   height?: number;
   groupId: string;
@@ -96,6 +99,20 @@ type ProjectAtom = {
   status: "pending_review" | "blocked";
   links: string[];
   reviewQuestion: string;
+};
+
+type TopReviewTarget = {
+  id: string;
+  rank: number;
+  targetType: "image" | "video_window" | "text_excerpt" | "blocker";
+  priorityReason: string;
+  sourceType?: SourceType;
+  sourceId?: string;
+  relativePath?: string;
+  openUri?: string;
+  targetAtomId?: string;
+  reviewQuestion: string;
+  sourceRef?: ProjectAtom["sourceRef"];
 };
 
 function writeJson(filePath: string, value: unknown): Promise<void> {
@@ -184,6 +201,52 @@ function sourceRelativePath(source: DiscoveredSource): string {
   return typeof source.metadata.relativePath === "string" ? source.metadata.relativePath : path.basename(source.uri);
 }
 
+function sourceOriginKind(source: DiscoveredSource): ProjectSourceOriginKind {
+  const value = source.metadata.originKind;
+  return value === "raw" || value === "derived" || value === "generated" || value === "project_note" || value === "unknown" ? value : "unknown";
+}
+
+function sourceAssetRole(source: DiscoveredSource): ProjectSourceAssetRole {
+  const value = source.metadata.assetRole;
+  return value === "raw_capture" || value === "original_media" || value === "derived_frame" || value === "derived_sidecar" || value === "generated_artifact" || value === "project_note" || value === "unknown"
+    ? value
+    : "unknown";
+}
+
+function sourceAssetRoleReason(source: DiscoveredSource): string {
+  return typeof source.metadata.assetRoleReason === "string" ? source.metadata.assetRoleReason : "unclassified_project_source";
+}
+
+function sourceClassificationCounts(sources: DiscoveredSource[]): Record<string, number> {
+  return sources.reduce<Record<string, number>>((counts, source) => {
+    const role = sourceAssetRole(source);
+    counts[role] = (counts[role] ?? 0) + 1;
+    return counts;
+  }, {});
+}
+
+function transcriptSidecars(sources: DiscoveredSource[]): DiscoveredSource[] {
+  return sources.filter((source) => sourceAssetRole(source) === "derived_sidecar");
+}
+
+function visualRoleScore(asset: Pick<VisualAsset, "originKind" | "assetRole" | "sizeBytes" | "relativePath">): number {
+  if (asset.assetRole === "raw_capture") return 0;
+  if (asset.originKind === "raw") return 1;
+  if (asset.assetRole === "unknown") return 2;
+  if (asset.assetRole === "derived_frame") return 3;
+  if (asset.originKind === "derived") return 4;
+  if (asset.originKind === "generated") return 5;
+  return 6;
+}
+
+function compareVisualAssets(a: VisualAsset, b: VisualAsset): number {
+  const roleDelta = visualRoleScore(a) - visualRoleScore(b);
+  if (roleDelta !== 0) return roleDelta;
+  const sizeDelta = b.sizeBytes - a.sizeBytes;
+  if (sizeDelta !== 0) return sizeDelta;
+  return a.relativePath.localeCompare(b.relativePath);
+}
+
 async function buildVisualAssets(sources: DiscoveredSource[]): Promise<VisualAsset[]> {
   const images = sources.filter((source) => source.type === "image");
   const assets: VisualAsset[] = [];
@@ -200,13 +263,20 @@ async function buildVisualAssets(sources: DiscoveredSource[]): Promise<VisualAss
       previewUri: fileUrl(source.uri),
       sizeBytes: Number(source.metadata.sizeBytes ?? 0),
       extension: String(source.metadata.extension ?? path.extname(source.uri).toLowerCase()),
+      originKind: sourceOriginKind(source),
+      assetRole: sourceAssetRole(source),
+      priorityReason: sourceAssetRoleReason(source),
       ...dimensions,
       groupId,
       priorityRank: index + 1,
       reviewStatus: "pending_review",
     });
   }
-  return assets;
+  return assets.sort(compareVisualAssets).map((asset, index) => ({
+    ...asset,
+    id: `photo_${String(index + 1).padStart(4, "0")}`,
+    priorityRank: index + 1,
+  }));
 }
 
 function videoStreamFromProbe(value: unknown): Record<string, unknown> | undefined {
@@ -514,9 +584,95 @@ function reviewQueueFromAtoms(atoms: ProjectAtom[]): Array<Record<string, unknow
     targetAtomId: atom.id,
     status: atom.status === "blocked" ? "blocked" : "pending",
     action: atom.status === "blocked" ? "resolve_or_accept_blocker" : "accept_edit_or_discard",
+    decision: null,
+    decisionSchema: "accept|edit|discard|defer",
+    editedContent: null,
+    reviewerNote: null,
+    correctedLabel: null,
+    rightsStatus: "not_reviewed",
+    nextAction: atom.status === "blocked" ? "resolve_blocker_or_defer" : "accept_edit_discard_or_defer",
     question: atom.reviewQuestion,
     sourceRef: atom.sourceRef,
   }));
+}
+
+function reviewDecisionTemplate(reviewQueue: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return reviewQueue.map((item) => ({
+    reviewItemId: item.id,
+    targetAtomId: item.targetAtomId,
+    decision: null,
+    editedContent: null,
+    reviewerNote: null,
+    correctedLabel: null,
+    rightsStatus: "not_reviewed",
+    nextAction: null,
+  }));
+}
+
+function buildTopReviewTargets(visualAssets: VisualAsset[], videoMatrix: VideoMatrixItem[], atoms: ProjectAtom[], blockers: LocalBlocker[]): TopReviewTarget[] {
+  const targets: TopReviewTarget[] = [];
+  for (const asset of visualAssets.slice(0, 18)) {
+    targets.push({
+      id: `target_${String(targets.length + 1).padStart(4, "0")}`,
+      rank: targets.length + 1,
+      targetType: "image",
+      sourceType: "image",
+      sourceId: asset.sourceId,
+      relativePath: asset.relativePath,
+      openUri: asset.previewUri,
+      priorityReason: `visual_priority:${asset.assetRole}:${asset.priorityReason}`,
+      reviewQuestion: "Record visible objects, spatial context, rights/no-use constraints, and whether this raw visual asset should anchor the project foundation.",
+      sourceRef: { sourceId: asset.sourceId, relativePath: asset.relativePath, uri: asset.uri, frameId: asset.id },
+    });
+  }
+  const videoWindows = videoMatrix.flatMap((video) =>
+    video.windows.slice(0, 6).map((window) => ({
+      video,
+      window,
+    })),
+  );
+  for (const { video, window } of videoWindows.slice(0, 12)) {
+    targets.push({
+      id: `target_${String(targets.length + 1).padStart(4, "0")}`,
+      rank: targets.length + 1,
+      targetType: "video_window",
+      sourceType: "video",
+      sourceId: video.sourceId,
+      relativePath: video.relativePath,
+      openUri: video.uri,
+      priorityReason: window.keyframePath ? "video_window_with_local_keyframe" : "original_video_window_scaffold",
+      reviewQuestion: window.reviewQuestion,
+      sourceRef: { sourceId: video.sourceId, relativePath: video.relativePath, uri: video.uri, timecode: window.timecode, startMs: window.startMs, endMs: window.endMs, frameId: window.keyframePath },
+    });
+  }
+  for (const atom of atoms.filter((item) => item.type === "text_excerpt").slice(0, 12)) {
+    targets.push({
+      id: `target_${String(targets.length + 1).padStart(4, "0")}`,
+      rank: targets.length + 1,
+      targetType: "text_excerpt",
+      sourceType: "document",
+      sourceId: atom.sourceRef.sourceId,
+      relativePath: atom.sourceRef.relativePath,
+      openUri: atom.sourceRef.uri,
+      targetAtomId: atom.id,
+      priorityReason: "first_project_text_excerpt",
+      reviewQuestion: atom.reviewQuestion,
+      sourceRef: atom.sourceRef,
+    });
+  }
+  for (const blocker of blockers) {
+    targets.push({
+      id: `target_${String(targets.length + 1).padStart(4, "0")}`,
+      rank: targets.length + 1,
+      targetType: "blocker",
+      sourceId: blocker.sourceId,
+      relativePath: blocker.sourcePath,
+      priorityReason: `blocker:${blocker.severity}`,
+      reviewQuestion: blocker.recovery,
+      sourceRef: { sourceId: blocker.sourceId, relativePath: blocker.sourcePath },
+    });
+  }
+  return targets.slice(0, 50).map((target, index) => ({ ...target, rank: index + 1 }));
 }
 
 function providerWindowManifest(videoMatrix: VideoMatrixItem[]): Record<string, unknown> {
@@ -555,7 +711,13 @@ function projectFoundationCandidate(discovery: ProjectDiscoveryResult, visualAss
       rights: source.rights,
     })),
     firstReviewTargets: {
-      images: visualAssets.slice(0, 12).map((asset) => ({ photoId: asset.id, sourceId: asset.sourceId, relativePath: asset.relativePath })),
+      images: visualAssets.slice(0, 12).map((asset) => ({
+        photoId: asset.id,
+        sourceId: asset.sourceId,
+        relativePath: asset.relativePath,
+        assetRole: asset.assetRole,
+        priorityReason: asset.priorityReason,
+      })),
       videoWindows: videoMatrix.flatMap((video) => video.windows.slice(0, 4).map((window) => ({ sourceId: video.sourceId, relativePath: video.relativePath, timecode: window.timecode, keyframePath: window.keyframePath }))).slice(0, 12),
       atoms: atoms.slice(0, 20).map((atom) => atom.id),
     },
@@ -576,7 +738,7 @@ function visualContactSheet(visualAssets: VisualAsset[]): string {
     .map(
       (asset) => `<figure>
   <a href="${asset.previewUri}"><img src="${asset.previewUri}" alt="${asset.relativePath}"></a>
-  <figcaption><strong>${asset.id}</strong><br>${asset.relativePath}<br>${asset.width ?? "?"} x ${asset.height ?? "?"}</figcaption>
+  <figcaption><strong>${asset.id}</strong> <span>${asset.assetRole}</span><br>${asset.relativePath}<br>${asset.width ?? "?"} x ${asset.height ?? "?"}<br>${asset.priorityReason}</figcaption>
 </figure>`,
     )
     .join("\n");
@@ -590,6 +752,7 @@ function visualContactSheet(visualAssets: VisualAsset[]): string {
     .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; }
     figure { margin: 0; border: 1px solid #d1d5db; padding: 8px; border-radius: 6px; background: #fff; }
     img { width: 100%; height: 140px; object-fit: contain; background: #f3f4f6; }
+    span { display: inline-block; padding: 1px 5px; border-radius: 4px; background: #eef2ff; color: #3730a3; font-size: 11px; }
     figcaption { margin-top: 8px; font-size: 12px; line-height: 1.35; overflow-wrap: anywhere; }
   </style>
 </head>
@@ -637,11 +800,105 @@ ${skippedLines}
 `;
 }
 
-function humanReviewSurface(discovery: ProjectDiscoveryResult, visualAssets: VisualAsset[], videoMatrix: VideoMatrixItem[], termQueue: Array<Record<string, unknown>>, blockers: LocalBlocker[]): string {
+function startHereJson(manifest: Record<string, unknown>, topTargets: TopReviewTarget[]): Record<string, unknown> {
+  return {
+    schema: "mmi.gateway.project_start_here",
+    schemaVersion: "1.0.0",
+    gatewayVersion: MMI_GATEWAY_PACKAGE_VERSION,
+    status: "candidate_review_required",
+    readOrder: [
+      "START_HERE.md",
+      "project_intake_manifest.json",
+      "top_review_targets.jsonl",
+      "human_review_surface.md",
+      "visual_contact_sheet.html",
+      "review_queue.jsonl",
+      "review_decisions.template.jsonl",
+      "gap_and_blocker_report.md",
+      "packet.json",
+    ],
+    firstAction: "Review top_review_targets.jsonl and fill review_decisions.template.jsonl before promoting any candidate atom.",
+    commandHints: {
+      validate: "mmi validate <this-output-dir> --json",
+      review: "mmi review <this-output-dir> --decisions review_decisions.template.jsonl --json",
+      handoff: "mmi handoff <this-output-dir> --json",
+    },
+    projectManifest: manifest,
+    topTargetsPreview: topTargets.slice(0, 12),
+    nonClaims: [...REQUIRED_NON_CLAIMS],
+  };
+}
+
+function startHereMarkdown(discovery: ProjectDiscoveryResult, manifest: Record<string, unknown>, topTargets: TopReviewTarget[]): string {
+  const counts = manifest.counts as Record<string, number>;
+  const targetLines =
+    topTargets
+      .slice(0, 12)
+      .map((target) => `- ${target.id}: ${target.targetType} ${target.relativePath ?? target.sourceId ?? "blocker"} (${target.priorityReason})`)
+      .join("\n") || "- No top review targets were generated.";
+  return `# MMI Start Here
+
+Project folder: \`${discovery.root}\`
+
+Status: \`candidate_review_required\`
+
+## Read Order
+
+1. \`project_intake_manifest.json\`
+2. \`top_review_targets.jsonl\`
+3. \`human_review_surface.md\`
+4. \`visual_contact_sheet.html\`
+5. \`review_queue.jsonl\`
+6. \`review_decisions.template.jsonl\`
+7. \`gap_and_blocker_report.md\`
+8. \`packet.json\`
+
+## Counts
+
+- Sources: ${counts.sources ?? 0}
+- Images: ${counts.image ?? 0}
+- Videos: ${counts.video ?? 0}
+- Audio: ${counts.audio ?? 0}
+- Documents: ${counts.document ?? 0}
+- Raw captures: ${counts.raw_capture ?? 0}
+- Derived frames: ${counts.derived_frame ?? 0}
+- Review items: ${counts.reviewItems ?? 0}
+
+## Top Targets
+
+${targetLines}
+
+## Decision Loop
+
+Fill \`review_decisions.template.jsonl\` with \`accept\`, \`edit\`, \`discard\`, or \`defer\`, then run:
+
+\`\`\`bash
+mmi review <this-output-dir> --decisions review_decisions.template.jsonl --json
+\`\`\`
+
+This output is candidate-only. It is not source truth, project truth, training-data permission, production execution permission, a review verdict, or a bound source matrix.
+`;
+}
+
+function humanReviewSurface(
+  discovery: ProjectDiscoveryResult,
+  visualAssets: VisualAsset[],
+  videoMatrix: VideoMatrixItem[],
+  termQueue: Array<Record<string, unknown>>,
+  topTargets: TopReviewTarget[],
+  blockers: LocalBlocker[],
+): string {
+  const roleCounts = sourceClassificationCounts(discovery.sources);
+  const sidecars = transcriptSidecars(discovery.sources);
   const imageLines = visualAssets
     .slice(0, 12)
-    .map((asset) => `- [ ] ${asset.id}: ${asset.relativePath}${asset.width && asset.height ? ` (${asset.width}x${asset.height})` : ""}`)
+    .map((asset) => `- [ ] ${asset.id}: ${asset.relativePath}${asset.width && asset.height ? ` (${asset.width}x${asset.height})` : ""} [${asset.assetRole}; ${asset.priorityReason}]`)
     .join("\n") || "- No image assets discovered.";
+  const targetLines =
+    topTargets
+      .slice(0, 20)
+      .map((target) => `- [ ] ${target.id}: ${target.targetType} ${target.relativePath ?? target.sourceId ?? "blocker"} (${target.priorityReason})`)
+      .join("\n") || "- No top review targets were generated.";
   const videoLines =
     videoMatrix
       .flatMap((video) => video.windows.slice(0, 4).map((window) => `- [ ] ${video.relativePath} ${window.timecode}${window.keyframePath ? ` keyframe=${window.keyframePath}` : ""}`))
@@ -666,10 +923,24 @@ Status: \`candidate_review_required\`
 - Videos: ${discovery.counts.video}
 - Audio: ${discovery.counts.audio}
 - Documents: ${discovery.counts.document}
+- Raw captures: ${roleCounts.raw_capture ?? 0}
+- Original audio/video: ${roleCounts.original_media ?? 0}
+- Derived frames: ${roleCounts.derived_frame ?? 0}
+- Transcript/ASR sidecars: ${roleCounts.derived_sidecar ?? 0}
+
+## Start Here
+
+- Open \`START_HERE.md\` for the shortest human path.
+- Read \`top_review_targets.jsonl\` before the full queue.
+- Fill \`review_decisions.template.jsonl\`, then run \`mmi review <this-output-dir> --decisions review_decisions.template.jsonl --json\`.
 
 ## First Visual Review
 
 ${imageLines}
+
+## Top Review Targets
+
+${targetLines}
 
 ## First Video Window Review
 
@@ -690,6 +961,10 @@ ${termLines}
 
 ${blockerLines}
 
+## Transcript / ASR Sidecars
+
+${sidecars.length > 0 ? sidecars.slice(0, 12).map((source) => `- ${source.id}: ${sourceRelativePath(source)}`).join("\n") : "- No transcript or ASR sidecars were discovered."}
+
 ## Next Demo Decision
 
 - [ ] Accept selected atoms.
@@ -699,16 +974,54 @@ ${blockerLines}
 `;
 }
 
+async function patchGatewayManifest(outputDir: string, projectManifest: Record<string, unknown>): Promise<void> {
+  const manifestPath = path.join(outputDir, "gateway_manifest.json");
+  try {
+    const existing = JSON.parse(await fs.readFile(manifestPath, "utf8")) as Record<string, unknown>;
+    const entrypoints = projectManifest.entrypoints as Record<string, unknown>;
+    existing.projectIntake = {
+      manifest: "project_intake_manifest.json",
+      startHere: "START_HERE.md",
+      startHereJson: "START_HERE.json",
+      entrypoints,
+      counts: projectManifest.counts,
+      boundary: projectManifest.boundary,
+    };
+    existing.files = {
+      packet: "packet.json",
+      agentHandoff: "agent_handoff.md",
+      projectStartHere: "START_HERE.md",
+      projectManifest: "project_intake_manifest.json",
+      topReviewTargets: "top_review_targets.jsonl",
+      reviewDecisionTemplate: "review_decisions.template.jsonl",
+      humanReviewSurface: "human_review_surface.md",
+      visualContactSheet: "visual_contact_sheet.html",
+      blockerReport: "gap_and_blocker_report.md",
+      ...entrypoints,
+    };
+    await writeJson(manifestPath, existing);
+  } catch {
+    // Plain packet runs do not have project intake entrypoints to merge.
+  }
+}
+
 export async function writeProjectIntakeArtifacts(discovery: ProjectDiscoveryResult, options: ProjectIntakeOptions): Promise<string[]> {
   const outputDir = path.resolve(options.outputDir);
   await fs.mkdir(outputDir, { recursive: true });
   const createdAt = new Date().toISOString();
+  const sidecars = transcriptSidecars(discovery.sources);
   const blockers: LocalBlocker[] = [
     {
       id: "blocker_local_asr_not_configured",
       severity: discovery.counts.audio > 0 || discovery.counts.video > 0 ? "warning" : "info",
-      message: "Local ASR is not configured in this v0 intake layer.",
-      recovery: "Add a transcript sidecar or review selected audio/video windows manually before downstream use.",
+      message:
+        sidecars.length > 0
+          ? `Local ASR did not run in this intake; ${sidecars.length} transcript/ASR sidecar file(s) were discovered and need review.`
+          : "Local ASR is not configured in this v0 intake layer.",
+      recovery:
+        sidecars.length > 0
+          ? "Review discovered transcript/ASR sidecars and link useful passages to selected video windows before downstream use."
+          : "Add a transcript sidecar or review selected audio/video windows manually before downstream use.",
     },
   ];
   const visualAssets = await buildVisualAssets(discovery.sources);
@@ -717,7 +1030,10 @@ export async function writeProjectIntakeArtifacts(discovery: ProjectDiscoveryRes
   const objectLedger = buildObjectLedger(discovery.sources, visualAssets, videoMatrix);
   const termQueue = buildTermQueue(discovery.sources);
   const reviewQueue = reviewQueueFromAtoms(atoms);
+  const decisionTemplate = reviewDecisionTemplate(reviewQueue);
+  const topTargets = buildTopReviewTargets(visualAssets, videoMatrix, atoms, blockers);
   const foundation = projectFoundationCandidate(discovery, visualAssets, videoMatrix, atoms, blockers);
+  const roleCounts = sourceClassificationCounts(discovery.sources);
   const manifest = {
     schema: "mmi.gateway.project_intake_manifest",
     schemaVersion: "1.0.0",
@@ -728,11 +1044,15 @@ export async function writeProjectIntakeArtifacts(discovery: ProjectDiscoveryRes
     status: "candidate_review_required",
     entrypoints: {
       sourceManifest: "source_manifest.json",
+      startHere: "START_HERE.md",
+      startHereJson: "START_HERE.json",
       visualAssets: "visual_asset_library.json",
       visualContactSheet: "visual_contact_sheet.html",
       videoMatrix: "video_window_review_matrix.json",
+      topReviewTargets: "top_review_targets.jsonl",
       atoms: "atoms.ndjson",
       reviewQueue: "review_queue.jsonl",
+      reviewDecisionTemplate: "review_decisions.template.jsonl",
       objectLedger: "object_evidence_ledger.json",
       termQueue: "term_correction_queue.jsonl",
       providerWindows: "provider_window_manifest.json",
@@ -746,6 +1066,8 @@ export async function writeProjectIntakeArtifacts(discovery: ProjectDiscoveryRes
       atoms: atoms.length,
       reviewItems: reviewQueue.length,
       blockers: blockers.length,
+      topReviewTargets: topTargets.length,
+      ...roleCounts,
       ...discovery.counts,
     },
     boundary: {
@@ -762,17 +1084,43 @@ export async function writeProjectIntakeArtifacts(discovery: ProjectDiscoveryRes
   };
   const files: Array<[string, unknown | string, "json" | "jsonl" | "text"]> = [
     ["project_intake_manifest.json", manifest, "json"],
+    ["START_HERE.md", startHereMarkdown(discovery, manifest, topTargets), "text"],
+    ["START_HERE.json", startHereJson(manifest, topTargets), "json"],
     ["source_manifest.json", sourceManifest, "json"],
-    ["visual_asset_library.json", { schema: "mmi.gateway.visual_asset_library", schemaVersion: "1.0.0", status: "candidate_review_required", assets: visualAssets }, "json"],
+    [
+      "visual_asset_library.json",
+      {
+        schema: "mmi.gateway.visual_asset_library",
+        schemaVersion: "1.0.0",
+        gatewayVersion: MMI_GATEWAY_PACKAGE_VERSION,
+        createdAt,
+        projectRoot: discovery.root,
+        status: "candidate_review_required",
+        counts: { assets: visualAssets.length, ...roleCounts },
+        boundary: manifest.boundary,
+        assets: visualAssets,
+      },
+      "json",
+    ],
     ["visual_contact_sheet.html", visualContactSheet(visualAssets), "text"],
-    ["video_window_review_matrix.json", { schema: "mmi.gateway.video_window_review_matrix", schemaVersion: "1.0.0", status: "candidate_review_required", videos: videoMatrix }, "json"],
+    [
+      "video_window_review_matrix.json",
+      { schema: "mmi.gateway.video_window_review_matrix", schemaVersion: "1.0.0", gatewayVersion: MMI_GATEWAY_PACKAGE_VERSION, createdAt, projectRoot: discovery.root, status: "candidate_review_required", counts: { videos: videoMatrix.length }, boundary: manifest.boundary, videos: videoMatrix },
+      "json",
+    ],
+    ["top_review_targets.jsonl", topTargets, "jsonl"],
     ["atoms.ndjson", atoms, "jsonl"],
     ["review_queue.jsonl", reviewQueue, "jsonl"],
-    ["object_evidence_ledger.json", { schema: "mmi.gateway.object_evidence_ledger", schemaVersion: "1.0.0", status: "candidate_review_required", items: objectLedger }, "json"],
+    ["review_decisions.template.jsonl", decisionTemplate, "jsonl"],
+    [
+      "object_evidence_ledger.json",
+      { schema: "mmi.gateway.object_evidence_ledger", schemaVersion: "1.0.0", gatewayVersion: MMI_GATEWAY_PACKAGE_VERSION, createdAt, projectRoot: discovery.root, status: "candidate_review_required", counts: { items: objectLedger.length }, boundary: manifest.boundary, items: objectLedger },
+      "json",
+    ],
     ["term_correction_queue.jsonl", termQueue, "jsonl"],
     ["provider_window_manifest.json", providerWindowManifest(videoMatrix), "json"],
     ["project_foundation_candidate.json", foundation, "json"],
-    ["human_review_surface.md", humanReviewSurface(discovery, visualAssets, videoMatrix, termQueue, blockers), "text"],
+    ["human_review_surface.md", humanReviewSurface(discovery, visualAssets, videoMatrix, termQueue, topTargets, blockers), "text"],
     ["gap_and_blocker_report.md", blockerReport(blockers, discovery.skipped), "text"],
   ];
   const written: string[] = [];
@@ -783,5 +1131,6 @@ export async function writeProjectIntakeArtifacts(discovery: ProjectDiscoveryRes
     else await fs.writeFile(filePath, String(value), "utf8");
     written.push(filePath);
   }
+  await patchGatewayManifest(outputDir, manifest);
   return written;
 }

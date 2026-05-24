@@ -10,6 +10,7 @@ import { ERROR_CATALOG, MmiGatewayError, issueWithRecovery, recoveryForIssue, re
 import { sourceInputSchema, sourceManifestSchema } from "./schema.ts";
 import { discoverProjectSources } from "./source-discovery.ts";
 import { writeProjectIntakeArtifacts, type ProjectIntakeProfile } from "./project-intake.ts";
+import { applyReviewDecisions, summarizeReviewQueue } from "./review-decisions.ts";
 import { MMI_GATEWAY_PACKAGE_VERSION, type GatewayIssue, type PacketProfile, type ProviderHealth, type SourceInput, type SourceType } from "./types.ts";
 
 export type CliResult = {
@@ -51,6 +52,7 @@ const RECIPES = [
     commands: [
       "mmi ingest-project ./my-project --profile creative-project --out ./my-project/.mmi --dry-run --json",
       "mmi ingest-project ./my-project --profile creative-project --out ./my-project/.mmi --json",
+      "mmi review ./my-project/.mmi --json",
     ],
   },
   {
@@ -103,16 +105,51 @@ function jsonLine(value: unknown): string {
     : [];
   return JSON.stringify(
     {
+      ...payload,
       schema: "mmi.gateway.cli_result",
       schemaVersion: "1.0.0",
       gatewayVersion: MMI_GATEWAY_PACKAGE_VERSION,
-      ...payload,
       data: payload.data ?? payload,
       nextCommands: Array.isArray(payload.nextCommands) ? payload.nextCommands : derivedNextCommands,
     },
     null,
     2,
   );
+}
+
+function cliError(
+  argv: string[],
+  command: string | undefined,
+  message: string,
+  code: GatewayIssue["code"] = "invalid_cli",
+  exitCode = 2,
+  extras: Partial<GatewayIssue> = {},
+): CliResult {
+  if (!wantsJson(argv)) return { exitCode, stdout: [], stderr: [message] };
+  const issues = enrichIssues([issue(code, message, extras)]);
+  return {
+    exitCode,
+    stdout: [
+      jsonLine({
+        ok: false,
+        command: command ?? "unknown",
+        issues,
+        error: {
+          code,
+          message: redactSensitiveText(message),
+          recovery: issues[0]?.recovery ?? "Inspect the command arguments and rerun.",
+        },
+        nextActions: [
+          {
+            id: "fix_command",
+            description: "Fix the command arguments and rerun.",
+            required: true,
+          },
+        ],
+      }),
+    ],
+    stderr: [],
+  };
 }
 
 function inferTypeFromUri(uri: string): SourceType {
@@ -281,6 +318,25 @@ function shellArg(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
+function replayArgs(argv: string[], specs: Array<{ name: string; takesValue: boolean }>): string[] {
+  const result: string[] = [];
+  const specByName = new Map(specs.map((spec) => [spec.name, spec]));
+  for (let index = 0; index < argv.length; index += 1) {
+    const spec = specByName.get(argv[index]);
+    if (!spec) continue;
+    result.push(argv[index]);
+    if (spec.takesValue && argv[index + 1]) {
+      result.push(argv[index + 1]);
+      index += 1;
+    }
+  }
+  return result;
+}
+
+function shellCommand(parts: string[]): string {
+  return parts.map(shellArg).join(" ");
+}
+
 async function writeStarter(configPath: string): Promise<{ samplePath: string; ingestCommand: string; validateCommand: string }> {
   const configDir = path.dirname(path.resolve(configPath));
   const samplePath = path.join(configDir, "sources", "starter.md");
@@ -304,7 +360,8 @@ function help(): string {
     "Commands:",
     "  mmi init [--config mmi.config.json] [--profile generic|agent|dashscope|openai-compatible] [--starter] [--json]",
     "  mmi ingest [--config mmi.config.json] [--provider manual|mock|dashscope] [--out dir] [--project-id id] [--prompt value] [--text value] [--file path] [--url url] [--sources file.json|file.jsonl] [--stdin-json|--stdin-jsonl] [--json]",
-    "  mmi ingest-project <folder> [--profile creative-project|field-video-project-base|visual-asset-library-only] [--out dir] [--dry-run] [--json]",
+    "  mmi ingest-project <folder> [--profile creative-project|field-video-project-base|visual-asset-library-only] [--out dir] [--dry-run] [--extract-keyframes] [--json]",
+    "  mmi review <project-intake-dir> [--decisions review_decisions.jsonl] [--json]",
     "  mmi validate <packet-dir-or-packet.json>",
     "  mmi handoff <packet-dir-or-packet.json> [--json]",
     "  mmi explain <issue-code> [--json]",
@@ -581,7 +638,7 @@ export async function runCli(argv = process.argv.slice(2)): Promise<CliResult> {
     if (command === "init") {
       const configPath = valueAfter(argv, "--config") ?? DEFAULT_CONFIG_FILE;
       const profile = valueAfter(argv, "--profile") ?? "generic";
-      if (!isConfigProfile(profile)) return { exitCode: 2, stdout, stderr: [`unsupported config profile: ${profile}`] };
+      if (!isConfigProfile(profile)) return cliError(argv, command, `unsupported config profile: ${profile}`);
       await writeDefaultConfig(configPath, profile);
       const starter = argv.includes("--starter") ? await writeStarter(configPath) : undefined;
       if (wantsJson(argv)) {
@@ -612,7 +669,7 @@ export async function runCli(argv = process.argv.slice(2)): Promise<CliResult> {
     if (command === "schema") {
       const target = valueAfter(argv, "--kind") ?? argv[1] ?? "candidate-packet";
       if (target !== "candidate-packet" && target !== "source-manifest") {
-        return { exitCode: 2, stdout, stderr: [`unsupported schema target: ${target}`] };
+        return cliError(argv, command, `unsupported schema target: ${target}`);
       }
       stdout.push(JSON.stringify(target === "source-manifest" ? sourceManifestJsonSchema() : candidatePacketJsonSchema(), null, 2));
       return { exitCode: 0, stdout, stderr };
@@ -633,7 +690,7 @@ export async function runCli(argv = process.argv.slice(2)): Promise<CliResult> {
     if (command === "explain") {
       const code = argv[1] as keyof typeof ERROR_CATALOG | undefined;
       if (!code || !(code in ERROR_CATALOG)) {
-        return { exitCode: 2, stdout, stderr: [`unknown issue code: ${code ?? "<missing>"}`] };
+        return cliError(argv, command, `unknown issue code: ${code ?? "<missing>"}`);
       }
       const entry = ERROR_CATALOG[code];
       if (wantsJson(argv)) {
@@ -662,13 +719,28 @@ export async function runCli(argv = process.argv.slice(2)): Promise<CliResult> {
 
     if (command === "handoff") {
       const target = argv[1];
-      if (!target) return { exitCode: 2, stdout, stderr: ["missing target"] };
+      if (!target) return cliError(argv, command, "missing target");
       const summary = await handoffSummary(target);
       if (wantsJson(argv)) {
         stdout.push(jsonLine({ ok: true, command: "handoff", ...summary }));
         return { exitCode: 0, stdout, stderr };
       }
       stdout.push(String(summary.handoff));
+      return { exitCode: 0, stdout, stderr };
+    }
+
+    if (command === "review") {
+      const target = argv[1];
+      if (!target) return cliError(argv, command, "missing project intake directory");
+      const decisionsPath = valueAfter(argv, "--decisions");
+      const summary = decisionsPath ? await applyReviewDecisions(target, decisionsPath) : await summarizeReviewQueue(target);
+      if (wantsJson(argv)) {
+        stdout.push(jsonLine({ ok: true, command: "review", ...summary }));
+        return { exitCode: 0, stdout, stderr };
+      }
+      stdout.push(decisionsPath ? "MMI_REVIEW_DECISIONS_SUMMARIZED" : "MMI_REVIEW_QUEUE_READY");
+      stdout.push(`run_dir: ${path.resolve(target)}`);
+      if (decisionsPath) stdout.push(`summary: ${path.join(path.resolve(target), "review_decision_summary.json")}`);
       return { exitCode: 0, stdout, stderr };
     }
 
@@ -679,26 +751,52 @@ export async function runCli(argv = process.argv.slice(2)): Promise<CliResult> {
 
     if (command === "ingest-project" || command === "ingest-folder") {
       const projectDir = argv[1] ?? valueAfter(argv, "--project-dir") ?? valueAfter(argv, "--folder");
-      if (!projectDir) return { exitCode: 2, stdout, stderr: ["missing project folder"] };
+      if (!projectDir) return cliError(argv, command, "missing project folder");
       const projectRoot = path.resolve(projectDir);
+      const projectStat = await fs
+        .stat(projectRoot)
+        .catch(() => null);
+      if (!projectStat || !projectStat.isDirectory()) {
+        return cliError(argv, command, `project folder does not exist or is not a directory: ${projectRoot}`, "invalid_source", 1, { path: projectRoot });
+      }
       const rawProfile = valueAfter(argv, "--profile") ?? "creative-project";
-      if (!isProjectIntakeProfile(rawProfile)) return { exitCode: 2, stdout, stderr: [`unsupported project intake profile: ${rawProfile}`] };
+      if (!isProjectIntakeProfile(rawProfile)) return cliError(argv, command, `unsupported project intake profile: ${rawProfile}`);
       const provider = valueAfter(argv, "--provider") ?? "manual";
       const outputDir = valueAfter(argv, "--out") ?? valueAfter(argv, "--output-dir") ?? path.join(projectRoot, ".mmi");
       const include = valuesAfter(argv, "--include");
       const exclude = valuesAfter(argv, "--exclude");
+      const maxFiles = numberAfter(argv, "--max-files", 2000);
+      const maxFileBytes = numberAfter(argv, "--max-file-bytes", Number.MAX_SAFE_INTEGER);
+      const maxTextBytes = numberAfter(argv, "--max-text-bytes", 1024 * 1024);
       const discovery = await discoverProjectSources(projectRoot, {
         include,
         exclude,
-        maxFiles: numberAfter(argv, "--max-files", 2000),
-        maxFileBytes: numberAfter(argv, "--max-file-bytes", Number.MAX_SAFE_INTEGER),
-        maxTextBytes: numberAfter(argv, "--max-text-bytes", 1024 * 1024),
+        maxFiles,
+        maxFileBytes,
+        maxTextBytes,
         hashFiles: argv.includes("--hash-files"),
         followSymlinks: argv.includes("--follow-symlinks"),
         provider: "manual",
       });
       const okDiscovery = discovery.sources.length > 0;
+      const previewLimit = numberAfter(argv, "--preview-sources", 200);
+      const replay = replayArgs(argv, [
+        { name: "--include", takesValue: true },
+        { name: "--exclude", takesValue: true },
+        { name: "--max-files", takesValue: true },
+        { name: "--max-file-bytes", takesValue: true },
+        { name: "--max-text-bytes", takesValue: true },
+        { name: "--hash-files", takesValue: false },
+        { name: "--follow-symlinks", takesValue: false },
+        { name: "--extract-audio", takesValue: false },
+        { name: "--extract-keyframes", takesValue: false },
+        { name: "--no-keyframes", takesValue: false },
+        { name: "--max-video-windows", takesValue: true },
+        { name: "--max-keyframes", takesValue: true },
+        { name: "--max-audio-seconds", takesValue: true },
+      ]);
       if (argv.includes("--dry-run")) {
+        const runCommand = shellCommand(["mmi", "ingest-project", projectRoot, "--profile", rawProfile, "--out", outputDir, ...replay, "--json"]);
         const plan = {
           ok: okDiscovery,
           command: "ingest-project",
@@ -707,26 +805,45 @@ export async function runCli(argv = process.argv.slice(2)): Promise<CliResult> {
           outputDir,
           profile: rawProfile,
           selectedProvider: provider,
+          providerMode: "manual_local_first",
+          effectiveProvider: "manual",
           wouldCallProviders: false,
           wouldWritePacket: false,
           wouldWriteProjectIntake: false,
+          effectiveOptions: {
+            include,
+            exclude,
+            maxFiles,
+            maxFileBytes,
+            maxTextBytes,
+            hashFiles: argv.includes("--hash-files"),
+            followSymlinks: argv.includes("--follow-symlinks"),
+            extractKeyframes: argv.includes("--extract-keyframes") && !argv.includes("--no-keyframes"),
+            extractAudio: argv.includes("--extract-audio"),
+          },
+          replayArgs: replay,
+          limits: { previewItems: previewLimit },
+          sourcesTruncated: discovery.sources.length > previewLimit,
+          skippedTruncated: discovery.skipped.length > previewLimit,
           counts: {
             sources: discovery.sources.length,
             skipped: discovery.skipped.length,
             ...discovery.counts,
           },
-          sources: discovery.sources.slice(0, 200).map((source) => ({
+          sources: discovery.sources.slice(0, previewLimit).map((source) => ({
             id: source.id,
             type: source.type,
             relativePath: source.metadata.relativePath,
+            originKind: source.metadata.originKind,
+            assetRole: source.metadata.assetRole,
             sizeBytes: source.metadata.sizeBytes,
             hasInlineText: Boolean(source.text),
           })),
-          skipped: discovery.skipped.slice(0, 200),
+          skipped: discovery.skipped.slice(0, previewLimit),
           nextActions: [
             {
               id: "run_project_intake",
-              command: `mmi ingest-project ${shellArg(projectRoot)} --profile ${shellArg(rawProfile)} --out ${shellArg(outputDir)} --json`,
+              command: runCommand,
               description: "Run the local-first project intake when the discovery plan looks correct.",
               required: okDiscovery,
             },
@@ -758,7 +875,7 @@ export async function runCli(argv = process.argv.slice(2)): Promise<CliResult> {
       const projectFiles = await writeProjectIntakeArtifacts(discovery, {
         profile: rawProfile,
         outputDir,
-        extractKeyframes: !argv.includes("--no-keyframes"),
+        extractKeyframes: argv.includes("--extract-keyframes") && !argv.includes("--no-keyframes"),
         extractAudio: argv.includes("--extract-audio"),
         maxVideoWindows: numberAfter(argv, "--max-video-windows", 12),
         maxKeyframes: numberAfter(argv, "--max-keyframes", 8),
@@ -775,6 +892,8 @@ export async function runCli(argv = process.argv.slice(2)): Promise<CliResult> {
             projectRoot,
             outputDir,
             profile: rawProfile,
+            providerMode: "manual_local_first",
+            effectiveProvider: "manual",
             counts: {
               sources: discovery.sources.length,
               skipped: discovery.skipped.length,
@@ -788,13 +907,19 @@ export async function runCli(argv = process.argv.slice(2)): Promise<CliResult> {
             skipped: discovery.skipped.slice(0, 200),
             packetPath: wrotePacket ? path.join(outputDir, "packet.json") : undefined,
             projectManifestPath: path.join(outputDir, "project_intake_manifest.json"),
+            startHerePath: path.join(outputDir, "START_HERE.md"),
+            topReviewTargetsPath: path.join(outputDir, "top_review_targets.jsonl"),
+            reviewDecisionTemplatePath: path.join(outputDir, "review_decisions.template.jsonl"),
             humanReviewSurfacePath: path.join(outputDir, "human_review_surface.md"),
             blockerReportPath: path.join(outputDir, "gap_and_blocker_report.md"),
             nextActions: [
               { id: "review_surface", description: "Open human_review_surface.md and accept/edit/discard project atoms.", required: true },
+              { id: "review_queue", command: `mmi review ${shellArg(outputDir)} --json`, description: "Inspect the review queue and decision template path before filling decisions.", required: true },
               { id: "validate", command: `mmi validate ${shellArg(outputDir)} --json`, description: "Validate the canonical candidate packet.", required: true },
               { id: "handoff", command: `mmi handoff ${shellArg(outputDir)} --json`, description: "Load next-agent handoff.", required: false },
             ],
+            packetFilesWritten: result.filesWritten ?? [],
+            projectFilesWritten: projectFiles,
             filesWritten: [...(result.filesWritten ?? []), ...projectFiles],
           }),
         );
@@ -874,7 +999,7 @@ export async function runCli(argv = process.argv.slice(2)): Promise<CliResult> {
 
     if (command === "validate") {
       const target = argv[1];
-      if (!target) return { exitCode: 2, stdout, stderr: ["missing target"] };
+      if (!target) return cliError(argv, command, "missing target");
       const runError = await readRunError(target);
       if (runError) {
         const issues = Array.isArray(runError.value.issues) ? (runError.value.issues as GatewayIssue[]) : [];
@@ -911,7 +1036,7 @@ export async function runCli(argv = process.argv.slice(2)): Promise<CliResult> {
       const provider = valueAfter(argv, "--provider");
       const profile = valueAfter(argv, "--profile") ?? "generic";
       if (profile !== "generic") {
-        return { exitCode: 2, stdout, stderr: [`unsupported profile: ${profile}`] };
+        return cliError(argv, command, `unsupported profile: ${profile}`);
       }
       const outputDir = valueAfter(argv, "--out") ?? valueAfter(argv, "--output-dir") ?? path.join(process.cwd(), "mmi-run");
       const inputSources = await sourcesFromArgs(argv, provider, { maxSourceBytes: config.policy?.maxSourceBytes });
@@ -1007,7 +1132,7 @@ export async function runCli(argv = process.argv.slice(2)): Promise<CliResult> {
       return { exitCode: result.issues.length === 0 ? 0 : 1, stdout, stderr };
     }
 
-    return { exitCode: 2, stdout, stderr: [`unknown command: ${command}`, help()] };
+    return cliError(argv, command, `unknown command: ${command}`);
   } catch (error) {
     if (wantsJson(argv)) {
       stdout.push(

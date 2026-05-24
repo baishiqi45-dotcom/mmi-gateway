@@ -27,13 +27,18 @@ export { readCandidatePacket, writeCandidatePacket, type CandidatePacketWriteOpt
 export { writeProjectIntakeArtifacts, type ProjectIntakeOptions, type ProjectIntakeProfile } from "./project-intake.ts";
 export {
   discoverProjectSources,
+  classifyProjectSource,
   inferSourceTypeFromPath,
   isTextReadableProjectFile,
   type DiscoveredSource,
   type DiscoverySkippedItem,
+  type ProjectSourceAssetRole,
+  type ProjectSourceClassification,
+  type ProjectSourceOriginKind,
   type ProjectDiscoveryOptions,
   type ProjectDiscoveryResult,
 } from "./source-discovery.ts";
+export { applyReviewDecisions, summarizeReviewQueue, type ReviewDecision, type ReviewDecisionValue } from "./review-decisions.ts";
 export { readPacket, writePacket } from "./writer.ts";
 export { validateCandidatePacket } from "./safety.ts";
 export {

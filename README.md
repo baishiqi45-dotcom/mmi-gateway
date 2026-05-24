@@ -82,7 +82,17 @@ npx @mmi/gateway perceive ./my-project/.mmi \
   --target-type video_window \
   --url-map ./urls.jsonl \
   --json
+
+npx @mmi/gateway asr fetch ./my-project/.mmi --wait --json
 ```
+
+`mmi asr fetch` reads `.mmi/perception/asr_tasks.jsonl`, polls task state when
+requested, downloads successful `transcription_url` results, and writes
+review-required transcript sidecars under `.mmi/perception/transcripts/`. It
+also refreshes `transcript_sidecars.jsonl` and `agent_review_targets.jsonl` so
+the next agent can find fetched transcripts from the normal review entrypoint.
+Transcript downloads are limited to HTTP(S) URLs and `--max-transcript-bytes`
+(20 MB by default).
 
 Use Qwen visual perception only as an explicit fallback, for example when the
 next agent cannot view the media itself:
@@ -179,8 +189,8 @@ Core ships with:
 is `agent_review_first`: it builds local review targets and transcript/ASR
 pointers for agents like Codex that can inspect media directly. `--asr`
 submits Paraformer tasks only for reviewed remote URLs, and
-`--visual-provider dashscope` opts into Qwen visual perception for selected
-targets.
+`mmi asr fetch` retrieves finished transcripts as sidecars. `--visual-provider
+dashscope` opts into Qwen visual perception for selected targets.
 
 | Provider | API key | Network | Local files | Best use |
 | --- | --- | --- | --- | --- |
@@ -189,6 +199,9 @@ targets.
 | `dashscope` | `DASHSCOPE_API_KEY` | yes | no by default | reviewed public/signed multimodal URLs |
 | `openai-compatible` | configured env var | yes | no by default | compatible text or URL-capable providers |
 | `module` | adapter-defined | adapter-defined | adapter-defined | project-owned provider plugins |
+
+For provider-backed runs, copy `.env.example` into your local secret workflow
+or export the variables directly. Never put API keys in `mmi.config.json`.
 
 Providers implement one interface:
 
@@ -284,6 +297,7 @@ Helpful CLI utilities:
 - `mmi explain <issue-code>` prints the recovery path for an issue.
 - `mmi ingest-project <folder>` scans a local project folder and writes visual/video/project-foundation review artifacts.
 - `mmi perceive <project-intake-dir>` writes an agent-readable perception bundle, with optional ASR and visual-provider fallback.
+- `mmi asr fetch|poll <project-intake-dir>` retrieves submitted ASR task results into review-required transcript sidecars.
 - `mmi review <project-intake-dir>` summarizes or applies filled review decisions.
 - `mmi recipes --json` lists copy-pasteable integration flows.
 - `mmi schema --kind source-manifest` prints the source manifest JSON Schema.

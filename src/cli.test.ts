@@ -59,6 +59,7 @@ describe("mmi CLI", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout.join("\n")).toContain("mmi perceive");
+    expect(result.stdout.join("\n")).toContain("mmi asr");
   });
 
   it("creates a runnable starter project", async () => {
@@ -530,6 +531,76 @@ describe("mmi CLI", () => {
     expect(parsed.counts.blockers).toBeGreaterThan(0);
     const blockers = await fs.readFile(path.join(outputDir, "perception", "perception_blockers.json"), "utf8");
     expect(blockers).toContain("Paraformer ASR REST submission needs an HTTP(S) or OSS URL");
+  });
+
+  it("checks ASR fetch state without requiring a provider call when no task id exists", async () => {
+    const projectRoot = await tmpDir();
+    await writeFixtureProject(projectRoot);
+    const outputDir = path.join(projectRoot, ".mmi");
+    await runCli(["ingest-project", projectRoot, "--out", outputDir, "--no-keyframes", "--json"]);
+    await runCli(["perceive", outputDir, "--limit", "1", "--no-keyframes", "--json"]);
+
+    const result = await runCli(["asr", "fetch", outputDir, "--json"]);
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout.join("\n")) as {
+      ok: boolean;
+      command: string;
+      status: string;
+      counts: { tasks: number; blockers: number };
+      nextCommands: string[];
+    };
+    expect(parsed).toMatchObject({
+      ok: true,
+      command: "asr",
+      status: "asr_fetch_checked",
+      counts: { tasks: 0, blockers: 1 },
+    });
+    expect(parsed.nextCommands).toEqual(expect.arrayContaining([`cat ${path.join(outputDir, "perception", "asr_fetch_blockers.json")}`]));
+  });
+
+  it("fetches ASR task results through the CLI and writes transcript sidecars", async () => {
+    const root = await tmpDir();
+    const perceptionDir = path.join(root, "perception");
+    await fs.mkdir(perceptionDir, { recursive: true });
+    const previousFetch = globalThis.fetch;
+    const previousKey = process.env.DASHSCOPE_API_KEY;
+    process.env.DASHSCOPE_API_KEY = "test_key";
+    globalThis.fetch = (async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/tasks/task_cli")) {
+        return new Response(
+          JSON.stringify({
+            output: {
+              task_id: "task_cli",
+              task_status: "SUCCEEDED",
+              results: [{ file_url: "https://storage.example/clip.wav", transcription_url: "https://result.example/task_cli.json", subtask_status: "SUCCEEDED" }],
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      if (url === "https://result.example/task_cli.json") {
+        return new Response(JSON.stringify({ transcripts: [{ text: "cli transcript" }] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ message: "unexpected" }), { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      const result = await runCli(["asr", "fetch", root, "--task-id", "task_cli", "--json"]);
+
+      expect(result.exitCode).toBe(0);
+      const parsed = JSON.parse(result.stdout.join("\n")) as { status: string; counts: { transcripts: number } };
+      expect(parsed.status).toBe("asr_results_review_required");
+      expect(parsed.counts.transcripts).toBe(1);
+      await expect(fs.stat(path.join(perceptionDir, "transcripts", "task_cli_01.json"))).resolves.toBeDefined();
+      const sidecars = await fs.readFile(path.join(perceptionDir, "transcript_sidecars.jsonl"), "utf8");
+      expect(sidecars).toContain("task_cli_01.json");
+    } finally {
+      globalThis.fetch = previousFetch;
+      if (previousKey === undefined) delete process.env.DASHSCOPE_API_KEY;
+      else process.env.DASHSCOPE_API_KEY = previousKey;
+    }
   });
 
   it("summarizes project review decisions without mutating the candidate packet", async () => {

@@ -95,6 +95,26 @@ OSS URLs. Direct local audio/video paths are reported in
 `perception_blockers.json` with recovery instructions instead of being silently
 uploaded.
 
+Fetch completed ASR transcripts separately:
+
+```ts
+import { runAsrTaskFetch } from "@mmi/gateway";
+
+const result = await runAsrTaskFetch("./project/.mmi", {
+  wait: true,
+  maxAttempts: 60,
+  maxTranscriptBytes: 20 * 1024 * 1024,
+});
+```
+
+`runAsrTaskFetch()` powers `mmi asr fetch|poll`. It reads submitted task IDs
+from `.mmi/perception/asr_tasks.jsonl` unless `taskIds` is passed, writes raw
+task responses, downloads successful transcription URLs, and keeps transcript
+sidecars under `.mmi/perception/transcripts/` with `status:
+"review_required"`. When transcripts are downloaded, it refreshes
+`transcript_sidecars.jsonl` and `agent_review_targets.jsonl`. Transcript
+downloads must be HTTP(S) and are size-limited.
+
 Set `visualProvider: "dashscope"` only when a provider visual pass is useful.
 Provider observations, perceived atoms, and their review queue stay in
 `.mmi/perception/` and do not mutate the canonical `packet.json`.

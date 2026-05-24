@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.0
+
+- Added `mmi asr fetch|poll` to retrieve DashScope Paraformer task results and write review-required transcript sidecars.
+- Added `runAsrTaskFetch()` for SDK callers.
+- Added ASR fetch manifests, raw task response storage, transcript download handling, and tests/docs for the submit-then-fetch workflow.
+- Added HTTP(S)-only transcript downloads, transcript size limits, refreshed transcript indexes, atomic perception writes, and `.env.example`.
+
 ## 0.6.0
 
 - Added `mmi perceive` as an agent-first perception bundle for project intake outputs.

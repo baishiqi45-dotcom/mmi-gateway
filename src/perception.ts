@@ -32,6 +32,17 @@ export type ProjectPerceptionOptions = {
   fetch?: typeof fetch;
 };
 
+export type AsrTaskFetchOptions = {
+  outputDir?: string;
+  taskIds?: string[];
+  wait?: boolean;
+  intervalMs?: number;
+  maxAttempts?: number;
+  maxTranscriptBytes?: number;
+  apiKeyEnv?: string;
+  fetch?: typeof fetch;
+};
+
 type TopReviewTarget = {
   id: string;
   rank: number;
@@ -74,6 +85,11 @@ type TranscriptSidecarRow = {
   relativePath: string;
   uri?: string;
   sourceType?: SourceType;
+  providerId?: "dashscope";
+  taskId?: string;
+  fileUrl?: string;
+  targetIds?: string[];
+  sourceIds?: string[];
   status: "review_required";
 };
 
@@ -130,6 +146,37 @@ type ProviderObservationRow = {
   status: "candidate_review_required";
 };
 
+type AsrFetchBlocker = {
+  id: string;
+  taskId?: string;
+  severity: "info" | "warning" | "error";
+  message: string;
+  recovery: string;
+};
+
+type AsrResultRow = {
+  id: string;
+  taskId: string;
+  providerId: "dashscope";
+  taskStatus?: string;
+  subtaskStatus?: string;
+  fileUrl?: string;
+  transcriptionUrl?: string;
+  transcriptPath?: string;
+  responsePath: string;
+  status: "pending" | "running" | "succeeded" | "failed" | "needs_attention";
+  reviewStatus: "review_required";
+  createdAt: string;
+};
+
+type AsrTaskFileRef = {
+  fileUrl: string;
+  sourceIds?: string[];
+  targetIds?: string[];
+  relativePaths?: string[];
+  timecodes?: string[];
+};
+
 type ToolResult = {
   ok: boolean;
   stdout: string;
@@ -137,12 +184,18 @@ type ToolResult = {
   error?: string;
 };
 
+async function writeTextAtomic(filePath: string, text: string): Promise<void> {
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(tempPath, text, "utf8");
+  await fs.rename(tempPath, filePath);
+}
+
 function writeJson(filePath: string, value: unknown): Promise<void> {
-  return fs.writeFile(filePath, JSON.stringify(value, null, 2) + "\n", "utf8");
+  return writeTextAtomic(filePath, JSON.stringify(value, null, 2) + "\n");
 }
 
 function writeJsonl(filePath: string, rows: unknown[]): Promise<void> {
-  return fs.writeFile(filePath, rows.map((row) => JSON.stringify(row)).join("\n") + (rows.length > 0 ? "\n" : ""), "utf8");
+  return writeTextAtomic(filePath, rows.map((row) => JSON.stringify(row)).join("\n") + (rows.length > 0 ? "\n" : ""));
 }
 
 function parseJsonl<T>(raw: string, label: string): T[] {
@@ -266,7 +319,7 @@ function defaultPrompt(target: TopReviewTarget): string {
     .join("\n");
 }
 
-function dashScopeApiKey(options: ProjectPerceptionOptions): string {
+function dashScopeApiKey(options: { apiKeyEnv?: string }): string {
   const envName = options.apiKeyEnv ?? "DASHSCOPE_API_KEY";
   const key = process.env[envName] ?? "";
   if (!key.trim()) throw new Error(`DashScope API key is missing. Set ${envName}.`);
@@ -357,6 +410,54 @@ async function submitParaformerTask(fileUrls: string[], options: ProjectPercepti
   const parsed = JSON.parse(await response.text()) as Record<string, unknown>;
   if (!response.ok) throw new Error(`Paraformer task submission failed: ${String(parsed.message ?? response.status)}`);
   return parsed;
+}
+
+async function queryParaformerTask(taskId: string, options: AsrTaskFetchOptions): Promise<Record<string, unknown>> {
+  const fetchFn = options.fetch ?? fetch;
+  const response = await fetchFn(`https://dashscope.aliyuncs.com/api/v1/tasks/${encodeURIComponent(taskId)}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${dashScopeApiKey(options)}`,
+    },
+  });
+  const parsed = JSON.parse(await response.text()) as Record<string, unknown>;
+  if (!response.ok) throw new Error(`Paraformer task query failed: ${String(parsed.message ?? response.status)}`);
+  return parsed;
+}
+
+function assertSafeTranscriptionUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("Transcription URL is not a valid URL.");
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new Error("Transcription URL must use http or https.");
+  }
+}
+
+async function fetchTranscriptionUrl(url: string, options: AsrTaskFetchOptions): Promise<unknown> {
+  assertSafeTranscriptionUrl(url);
+  const fetchFn = options.fetch ?? fetch;
+  const response = await fetchFn(url);
+  const maxBytes = options.maxTranscriptBytes ?? 20 * 1024 * 1024;
+  const contentLength = response.headers.get("content-length");
+  if (contentLength) {
+    const parsedLength = Number(contentLength);
+    if (Number.isFinite(parsedLength) && parsedLength > maxBytes) {
+      throw new Error(`Transcription download exceeds maxTranscriptBytes (${parsedLength} > ${maxBytes}).`);
+    }
+  }
+  const raw = await response.text();
+  if (!response.ok) throw new Error(`Transcription download failed: HTTP ${response.status}`);
+  const rawBytes = Buffer.byteLength(raw, "utf8");
+  if (rawBytes > maxBytes) throw new Error(`Transcription download exceeds maxTranscriptBytes (${rawBytes} > ${maxBytes}).`);
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return { text: raw };
+  }
 }
 
 function observationToAtom(row: ProviderObservationRow, index: number): Record<string, unknown> {
@@ -599,12 +700,29 @@ async function maybeSubmitAsr(
 ): Promise<Record<string, unknown>[]> {
   if (!options.asr) return [];
   const bySourceId = new Map(sources.map((source) => [source.id, source]));
-  const candidateUrls = selectedTargets
+  const candidateEntries = selectedTargets
     .filter((target) => target.targetType === "video_window" || target.targetType === "audio")
-    .map((target) => effectiveUri(target, bySourceId.get(target.sourceId ?? ""), urlMap))
-    .filter((uri, index, list) => uri && list.indexOf(uri) === index);
-  const remoteUrls = candidateUrls.filter((uri) => isHttpUrl(uri) || isOssUrl(uri));
-  for (const uri of candidateUrls.filter((uri) => !isHttpUrl(uri) && !isOssUrl(uri))) {
+    .map((target) => {
+      const source = bySourceId.get(target.sourceId ?? "");
+      return { target, source, uri: effectiveUri(target, source, urlMap) };
+    })
+    .filter((entry) => entry.uri);
+  const byUri = new Map<string, typeof candidateEntries>();
+  for (const entry of candidateEntries) byUri.set(entry.uri, [...(byUri.get(entry.uri) ?? []), entry]);
+  const uniqueEntries = [...byUri.entries()].map(([uri, refs]) => ({ uri, refs }));
+  const remoteEntries = uniqueEntries.filter((entry) => isHttpUrl(entry.uri) || isOssUrl(entry.uri));
+  const remoteUrls = remoteEntries.map((entry) => entry.uri);
+  const fileRefs = remoteEntries.map((entry): AsrTaskFileRef => {
+    const sourceIds = [...new Set(entry.refs.map((ref) => ref.target.sourceId).filter((sourceId): sourceId is string => Boolean(sourceId)))];
+    return {
+      fileUrl: entry.uri,
+      sourceIds,
+      targetIds: [...new Set(entry.refs.map((ref) => ref.target.id))],
+      relativePaths: [...new Set(entry.refs.map((ref) => ref.target.relativePath ?? ref.target.sourceRef?.relativePath ?? sourceRelativePath(ref.source, ref.target.id)).filter(Boolean))],
+      timecodes: [...new Set(entry.refs.map((ref) => ref.target.sourceRef?.timecode).filter((timecode): timecode is string => Boolean(timecode)))],
+    };
+  });
+  for (const uri of uniqueEntries.filter((entry) => !isHttpUrl(entry.uri) && !isOssUrl(entry.uri)).map((entry) => entry.uri)) {
     blockers.push({
       id: `blocker_paraformer_local_${hashText(uri)}`,
       severity: "warning",
@@ -614,6 +732,7 @@ async function maybeSubmitAsr(
   }
   if (remoteUrls.length === 0) return [];
   const response = await submitParaformerTask(remoteUrls, options);
+  const taskId = extractTaskId(response);
   return [
     {
       schema: "mmi.gateway.asr_task",
@@ -622,10 +741,338 @@ async function maybeSubmitAsr(
       providerId: "dashscope",
       model: options.asrModel ?? "paraformer-v2",
       fileUrls: remoteUrls,
+      fileRefs,
       response,
+      taskId,
       status: "submitted",
     },
   ];
+}
+
+function extractObject(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : undefined;
+}
+
+function extractTaskId(value: unknown): string | undefined {
+  const object = extractObject(value);
+  if (!object) return undefined;
+  const direct = object.taskId ?? object.task_id;
+  if (typeof direct === "string" && direct.trim()) return direct;
+  const output = extractObject(object.output);
+  const nested = output?.task_id ?? output?.taskId;
+  return typeof nested === "string" && nested.trim() ? nested : undefined;
+}
+
+function taskStatusFromResponse(value: unknown): string | undefined {
+  const output = extractObject(extractObject(value)?.output);
+  const status = output?.task_status ?? output?.taskStatus;
+  return typeof status === "string" ? status : undefined;
+}
+
+function resultRowsFromResponse(value: unknown): Array<Record<string, unknown>> {
+  const output = extractObject(extractObject(value)?.output);
+  const results = output?.results;
+  return Array.isArray(results) ? results.filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null) : [];
+}
+
+function resultStatus(taskStatus: string | undefined, subtaskStatus: string | undefined): AsrResultRow["status"] {
+  const status = (subtaskStatus ?? taskStatus ?? "").toUpperCase();
+  if (status === "SUCCEEDED") return "succeeded";
+  if (status === "RUNNING") return "running";
+  if (status === "PENDING") return "pending";
+  if (status === "FAILED" || status === "CANCELED" || status === "UNKNOWN") return "failed";
+  return "needs_attention";
+}
+
+async function readAsrTasks(outputDir: string): Promise<Array<Record<string, unknown>>> {
+  const filePath = path.join(outputDir, "asr_tasks.jsonl");
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    return parseJsonl<Record<string, unknown>>(raw, "asr_tasks.jsonl");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+function taskIdsFromRows(rows: Array<Record<string, unknown>>): string[] {
+  const ids = rows
+    .map((row) => {
+      const direct = extractTaskId(row);
+      if (direct) return direct;
+      return extractTaskId(row.response);
+    })
+    .filter((taskId): taskId is string => Boolean(taskId));
+  return [...new Set(ids)];
+}
+
+function asStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const values = value.filter((item): item is string => typeof item === "string" && item.length > 0);
+  return values.length > 0 ? [...new Set(values)] : undefined;
+}
+
+function fileRefsFromTaskRow(row: Record<string, unknown> | undefined): AsrTaskFileRef[] {
+  if (!row) return [];
+  if (Array.isArray(row.fileRefs)) {
+    return row.fileRefs
+      .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
+      .flatMap((item) => {
+        const fileUrl = typeof item.fileUrl === "string" ? item.fileUrl : typeof item.file_url === "string" ? item.file_url : undefined;
+        if (!fileUrl) return [];
+        return [
+          {
+            fileUrl,
+            sourceIds: asStringArray(item.sourceIds),
+            targetIds: asStringArray(item.targetIds),
+            relativePaths: asStringArray(item.relativePaths),
+            timecodes: asStringArray(item.timecodes),
+          },
+        ];
+      });
+  }
+  if (!Array.isArray(row.fileUrls)) return [];
+  return row.fileUrls.filter((fileUrl): fileUrl is string => typeof fileUrl === "string" && fileUrl.length > 0).map((fileUrl) => ({ fileUrl }));
+}
+
+function fileRefForResult(fileRefs: AsrTaskFileRef[], fileUrl: string | undefined, index: number): AsrTaskFileRef | undefined {
+  if (fileUrl) {
+    const exact = fileRefs.find((ref) => ref.fileUrl === fileUrl);
+    if (exact) return exact;
+  }
+  return fileRefs[index];
+}
+
+async function readJsonlIfExists<T>(filePath: string, label: string): Promise<T[]> {
+  try {
+    return parseJsonl<T>(await fs.readFile(filePath, "utf8"), label);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+function transcriptSidecarKey(row: TranscriptSidecarRow): string {
+  return row.uri ?? row.relativePath ?? row.id;
+}
+
+function mergeTranscriptSidecars(existing: TranscriptSidecarRow[], additions: TranscriptSidecarRow[]): TranscriptSidecarRow[] {
+  const byKey = new Map<string, TranscriptSidecarRow>();
+  for (const row of existing) byKey.set(transcriptSidecarKey(row), row);
+  for (const row of additions) byKey.set(transcriptSidecarKey(row), row);
+  return [...byKey.values()];
+}
+
+function mergeTranscriptRefs(existing: TranscriptSidecarRow[], additions: TranscriptSidecarRow[]): TranscriptSidecarRow[] {
+  const byKey = new Map<string, TranscriptSidecarRow>();
+  for (const row of existing) byKey.set(transcriptSidecarKey(row), row);
+  for (const row of additions) byKey.set(transcriptSidecarKey(row), row);
+  return [...byKey.values()];
+}
+
+async function updateFetchedTranscriptIndexes(outputDir: string, sidecars: TranscriptSidecarRow[]): Promise<string[]> {
+  if (sidecars.length === 0) return [];
+  const transcriptSidecarsPath = path.join(outputDir, "transcript_sidecars.jsonl");
+  const existing = await readJsonlIfExists<TranscriptSidecarRow>(transcriptSidecarsPath, "transcript_sidecars.jsonl");
+  const merged = mergeTranscriptSidecars(existing, sidecars);
+  await writeJsonl(transcriptSidecarsPath, merged);
+  const files = [transcriptSidecarsPath];
+
+  const agentTargetsPath = path.join(outputDir, "agent_review_targets.jsonl");
+  const targets = await readJsonlIfExists<AgentReviewTargetRow>(agentTargetsPath, "agent_review_targets.jsonl");
+  if (targets.length > 0) {
+    const updated = targets.map((target) => ({
+      ...target,
+      transcriptSidecarRefs: mergeTranscriptRefs(target.transcriptSidecarRefs ?? [], sidecars).slice(0, 50),
+    }));
+    await writeJsonl(agentTargetsPath, updated);
+    files.push(agentTargetsPath);
+  }
+  return files;
+}
+
+async function queryWithOptionalWait(taskId: string, options: AsrTaskFetchOptions): Promise<Record<string, unknown>> {
+  const maxAttempts = Math.max(1, options.maxAttempts ?? (options.wait ? 60 : 1));
+  const intervalMs = Math.max(0, options.intervalMs ?? 2000);
+  let lastResponse: Record<string, unknown> | undefined;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    lastResponse = await queryParaformerTask(taskId, options);
+    const status = (taskStatusFromResponse(lastResponse) ?? "").toUpperCase();
+    if (!options.wait || (status !== "PENDING" && status !== "RUNNING")) return lastResponse;
+    if (attempt < maxAttempts && intervalMs > 0) await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return lastResponse ?? {};
+}
+
+export async function runAsrTaskFetch(runDir: string, options: AsrTaskFetchOptions = {}): Promise<Record<string, unknown>> {
+  const root = path.resolve(runDir);
+  const outputDir = path.resolve(options.outputDir ?? path.join(root, "perception"));
+  const transcriptDir = path.join(outputDir, "transcripts");
+  const responseDir = path.join(outputDir, "asr_task_responses");
+  await fs.mkdir(transcriptDir, { recursive: true });
+  await fs.mkdir(responseDir, { recursive: true });
+  const createdAt = new Date().toISOString();
+  const taskRows = await readAsrTasks(outputDir);
+  const taskIds = options.taskIds?.length ? [...new Set(options.taskIds)] : taskIdsFromRows(taskRows);
+  const taskRowsById = new Map(taskRows.flatMap((row) => {
+    const taskId = extractTaskId(row) ?? extractTaskId(row.response);
+    return taskId ? ([[taskId, row]] as Array<[string, Record<string, unknown>]>) : [];
+  }));
+  const blockers: AsrFetchBlocker[] = [];
+  const results: AsrResultRow[] = [];
+  const fetchedTranscriptSidecars: TranscriptSidecarRow[] = [];
+  if (taskIds.length === 0) {
+    blockers.push({
+      id: "blocker_asr_no_task_id",
+      severity: "warning",
+      message: "No Paraformer task IDs were found.",
+      recovery: "Run mmi perceive <project/.mmi> --asr with reviewed HTTP(S)/OSS URLs, or pass --task-id explicitly.",
+    });
+  }
+  for (const taskId of taskIds) {
+    try {
+      const fileRefs = fileRefsFromTaskRow(taskRowsById.get(taskId));
+      const response = await queryWithOptionalWait(taskId, options);
+      const taskStatus = taskStatusFromResponse(response);
+      const responsePath = path.join(responseDir, `${taskId}.json`);
+      await writeJson(responsePath, response);
+      const rows = resultRowsFromResponse(response);
+      if (rows.length === 0) {
+        results.push({
+          id: `asr_result_${String(results.length + 1).padStart(5, "0")}`,
+          taskId,
+          providerId: "dashscope",
+          taskStatus,
+          responsePath: path.relative(outputDir, responsePath),
+          status: resultStatus(taskStatus, undefined),
+          reviewStatus: "review_required",
+          createdAt,
+        });
+        continue;
+      }
+      for (const [index, row] of rows.entries()) {
+        const transcriptionUrl = typeof row.transcription_url === "string" ? row.transcription_url : typeof row.transcriptionUrl === "string" ? row.transcriptionUrl : undefined;
+        const subtaskStatus = typeof row.subtask_status === "string" ? row.subtask_status : typeof row.subtaskStatus === "string" ? row.subtaskStatus : undefined;
+        const fileUrl = typeof row.file_url === "string" ? row.file_url : typeof row.fileUrl === "string" ? row.fileUrl : undefined;
+        const fileRef = fileRefForResult(fileRefs, fileUrl, index);
+        let transcriptPath: string | undefined;
+        if (transcriptionUrl && resultStatus(taskStatus, subtaskStatus) === "succeeded") {
+          try {
+            const transcript = await fetchTranscriptionUrl(transcriptionUrl, options);
+            const filePath = path.join(transcriptDir, `${taskId}_${String(index + 1).padStart(2, "0")}.json`);
+            transcriptPath = path.relative(outputDir, filePath);
+            await writeJson(filePath, {
+              schema: "mmi.gateway.asr_transcript",
+              schemaVersion: "1.0.0",
+              gatewayVersion: MMI_GATEWAY_PACKAGE_VERSION,
+              providerId: "dashscope",
+              taskId,
+              fileUrl,
+              transcriptionUrl,
+              sourceIds: fileRef?.sourceIds,
+              targetIds: fileRef?.targetIds,
+              relativePaths: fileRef?.relativePaths,
+              timecodes: fileRef?.timecodes,
+              status: "review_required",
+              transcript,
+            });
+            const sourceId = fileRef?.sourceIds?.[0] ?? `asr_task_${hashText(taskId)}`;
+            fetchedTranscriptSidecars.push({
+              id: `asr_transcript_sidecar_${hashText(`${taskId}:${index}`)}`,
+              sourceId,
+              sourceIds: fileRef?.sourceIds,
+              targetIds: fileRef?.targetIds,
+              relativePath: transcriptPath,
+              uri: filePath,
+              providerId: "dashscope",
+              taskId,
+              fileUrl,
+              sourceType: "audio",
+              status: "review_required",
+            });
+          } catch (error) {
+            blockers.push({
+              id: `blocker_asr_download_${hashText(taskId + String(index))}`,
+              taskId,
+              severity: "warning",
+              message: error instanceof Error ? error.message : String(error),
+              recovery: "Retry mmi asr fetch while the transcription URL is still valid, or inspect the saved task response.",
+            });
+          }
+        }
+        results.push({
+          id: `asr_result_${String(results.length + 1).padStart(5, "0")}`,
+          taskId,
+          providerId: "dashscope",
+          taskStatus,
+          subtaskStatus,
+          fileUrl,
+          transcriptionUrl,
+          transcriptPath,
+          responsePath: path.relative(outputDir, responsePath),
+          status: resultStatus(taskStatus, subtaskStatus),
+          reviewStatus: "review_required",
+          createdAt,
+        });
+      }
+    } catch (error) {
+      blockers.push({
+        id: `blocker_asr_query_${hashText(taskId)}`,
+        taskId,
+        severity: "error",
+        message: error instanceof Error ? error.message : String(error),
+        recovery: "Check DASHSCOPE_API_KEY, task_id, network access, and whether the task belongs to this account.",
+      });
+    }
+  }
+  const indexFiles = await updateFetchedTranscriptIndexes(outputDir, fetchedTranscriptSidecars);
+  const manifest = {
+    schema: "mmi.gateway.asr_fetch_manifest",
+    schemaVersion: "1.0.0",
+    gatewayVersion: MMI_GATEWAY_PACKAGE_VERSION,
+    createdAt,
+    runDir: root,
+    outputDir,
+    status:
+      blockers.some((blocker) => blocker.severity === "error") || results.some((row) => row.status === "failed" || row.status === "needs_attention")
+        ? "asr_fetch_needs_attention"
+        : results.some((row) => row.status === "succeeded")
+          ? "asr_results_review_required"
+          : "asr_fetch_checked",
+    entrypoints: {
+      asrResults: "asr_results.jsonl",
+      asrFetchBlockers: "asr_fetch_blockers.json",
+      transcripts: "transcripts/",
+      taskResponses: "asr_task_responses/",
+    },
+    counts: {
+      tasks: taskIds.length,
+      results: results.length,
+      transcripts: results.filter((row) => row.transcriptPath).length,
+      transcriptSidecars: fetchedTranscriptSidecars.length,
+      blockers: blockers.length,
+    },
+    boundary: {
+      candidateOnly: true,
+      reviewRequired: true,
+      canonicalPacketMutated: false,
+      nonClaims: [...REQUIRED_NON_CLAIMS],
+    },
+  };
+  const files = [
+    path.join(outputDir, "asr_fetch_manifest.json"),
+    path.join(outputDir, "asr_results.jsonl"),
+    path.join(outputDir, "asr_fetch_blockers.json"),
+    ...indexFiles,
+  ];
+  await writeJson(files[0], manifest);
+  await writeJsonl(files[1], results);
+  await writeJson(files[2], { schema: "mmi.gateway.asr_fetch_blockers", schemaVersion: "1.0.0", gatewayVersion: MMI_GATEWAY_PACKAGE_VERSION, blockers });
+  return {
+    ...manifest,
+    taskIds,
+    filesWritten: files,
+  };
 }
 
 function perceptionStatus(options: ProjectPerceptionOptions, blockers: PerceptionBlocker[], observations: ProviderObservationRow[], asrTasks: Record<string, unknown>[]): string {

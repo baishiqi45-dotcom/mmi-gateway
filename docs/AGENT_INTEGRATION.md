@@ -96,6 +96,8 @@ npx @mmi/gateway perceive ./project/.mmi \
   --target-type video_window \
   --url-map ./urls.jsonl \
   --json
+
+npx @mmi/gateway asr fetch ./project/.mmi --wait --json
 ```
 
 `urls.jsonl` can map either `sourceId` or `targetId`:
@@ -103,6 +105,14 @@ npx @mmi/gateway perceive ./project/.mmi \
 ```jsonl
 {"sourceId":"src_video_001","url":"https://storage.example/clip.mp4"}
 ```
+
+`mmi asr fetch` reads `asr_tasks.jsonl`, writes raw task responses to
+`asr_task_responses/`, and writes successful transcript downloads to
+`transcripts/`. It also refreshes `transcript_sidecars.jsonl` and
+`agent_review_targets.jsonl`, so agents can stay on the same review entrypoint.
+Treat every transcript as `review_required`; it is an input for the receiving
+agent, not project truth. Transcript downloads are HTTP(S)-only and size-limited
+by `--max-transcript-bytes`.
 
 Use visual provider fallback only when the receiving agent cannot inspect media
 itself, or when the user explicitly wants provider perception:

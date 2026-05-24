@@ -10,7 +10,7 @@ import { ERROR_CATALOG, MmiGatewayError, issueWithRecovery, recoveryForIssue, re
 import { sourceInputSchema, sourceManifestSchema } from "./schema.ts";
 import { discoverProjectSources } from "./source-discovery.ts";
 import { writeProjectIntakeArtifacts, type ProjectIntakeProfile } from "./project-intake.ts";
-import { runProjectPerception, type PerceptionProvider, type PerceptionTargetType } from "./perception.ts";
+import { runAsrTaskFetch, runProjectPerception, type PerceptionProvider, type PerceptionTargetType } from "./perception.ts";
 import { applyReviewDecisions, summarizeReviewQueue } from "./review-decisions.ts";
 import { MMI_GATEWAY_PACKAGE_VERSION, type GatewayIssue, type PacketProfile, type ProviderHealth, type SourceInput, type SourceType } from "./types.ts";
 
@@ -63,6 +63,7 @@ const RECIPES = [
     commands: [
       "mmi perceive ./my-project/.mmi --no-keyframes --json",
       "mmi perceive ./my-project/.mmi --asr --target-type video_window --url-map ./urls.jsonl --json",
+      "mmi asr fetch ./my-project/.mmi --wait --json",
       "mmi perceive ./my-project/.mmi --visual-provider dashscope --target-type image --allow-local-media --limit 3 --json",
     ],
   },
@@ -373,6 +374,7 @@ function help(): string {
     "  mmi ingest [--config mmi.config.json] [--provider manual|mock|dashscope] [--out dir] [--project-id id] [--prompt value] [--text value] [--file path] [--url url] [--sources file.json|file.jsonl] [--stdin-json|--stdin-jsonl] [--json]",
     "  mmi ingest-project <folder> [--profile creative-project|field-video-project-base|visual-asset-library-only] [--out dir] [--dry-run] [--extract-keyframes] [--json]",
     "  mmi perceive <project-intake-dir> [--asr] [--url-map urls.jsonl] [--visual-provider mock|dashscope] [--target-type image|video_window|audio|text_excerpt] [--allow-local-media] [--max-local-image-bytes n] [--no-keyframes] [--json]",
+    "  mmi asr fetch|poll <project-intake-dir> [--task-id id] [--wait] [--max-attempts n] [--interval-ms n] [--max-transcript-bytes n] [--json]",
     "  mmi review <project-intake-dir> [--decisions review_decisions.jsonl] [--json]",
     "  mmi validate <packet-dir-or-packet.json>",
     "  mmi handoff <packet-dir-or-packet.json> [--json]",
@@ -814,12 +816,24 @@ export async function runCli(argv = process.argv.slice(2)): Promise<CliResult> {
       const status = typeof result.status === "string" ? result.status : "unknown";
       const ok = status !== "perception_needs_attention";
       const outputDir = typeof result.outputDir === "string" ? result.outputDir : path.join(path.resolve(target), "perception");
+      const resultCounts = typeof result.counts === "object" && result.counts !== null ? (result.counts as { asrTasks?: unknown }) : {};
+      const asrTaskCount = typeof resultCounts.asrTasks === "number" ? resultCounts.asrTasks : 0;
       const nextActions = [
         {
           id: "agent_review",
           description: "Open agent_review_targets.jsonl and inspect local media/transcripts with the receiving agent.",
           required: true,
         },
+        ...(asrTaskCount > 0
+          ? [
+              {
+                id: "fetch_asr",
+                command: `mmi asr fetch ${shellArg(path.resolve(target))} --wait --json`,
+                description: "Fetch completed Paraformer transcripts into review-required sidecars.",
+                required: true,
+              },
+            ]
+          : []),
         {
           id: "asr_remote_url",
           command: `mmi perceive ${shellArg(path.resolve(target))} --asr --url-map ./urls.jsonl --json`,
@@ -842,6 +856,51 @@ export async function runCli(argv = process.argv.slice(2)): Promise<CliResult> {
       stdout.push(`status: ${status}`);
       stdout.push(`agent_review_targets: ${path.join(outputDir, "agent_review_targets.jsonl")}`);
       stdout.push(`blockers: ${path.join(outputDir, "perception_blockers.json")}`);
+      return { exitCode: ok ? 0 : 1, stdout, stderr };
+    }
+
+    if (command === "asr") {
+      const action = argv[1] === "poll" || argv[1] === "fetch" || !argv[1] ? (argv[1] ?? "fetch") : "fetch";
+      if (action !== "fetch" && action !== "poll") return cliError(argv, command, `unsupported asr action: ${action}`);
+      const targetIndex = action === argv[1] ? 2 : 1;
+      const positionalTarget = argv[targetIndex] && !argv[targetIndex].startsWith("-") ? argv[targetIndex] : undefined;
+      const target = valueAfter(argv, "--project-intake-dir") ?? valueAfter(argv, "--run-dir") ?? positionalTarget;
+      if (!target) return cliError(argv, command, "missing project intake directory");
+      const result = await runAsrTaskFetch(target, {
+        outputDir: valueAfter(argv, "--out") ?? valueAfter(argv, "--output-dir"),
+        taskIds: valuesAfter(argv, "--task-id"),
+        wait: action === "poll" || argv.includes("--wait"),
+        intervalMs: numberAfter(argv, "--interval-ms", 2000),
+        maxAttempts: numberAfter(argv, "--max-attempts", action === "poll" || argv.includes("--wait") ? 60 : 1),
+        maxTranscriptBytes: numberAfter(argv, "--max-transcript-bytes", 20 * 1024 * 1024),
+        apiKeyEnv: valueAfter(argv, "--api-key-env"),
+      });
+      const status = typeof result.status === "string" ? result.status : "unknown";
+      const ok = status !== "asr_fetch_needs_attention";
+      const outputDir = typeof result.outputDir === "string" ? result.outputDir : path.join(path.resolve(target), "perception");
+      const nextActions = [
+        {
+          id: "review_transcripts",
+          description: "Open transcripts/ and asr_results.jsonl; accept, edit, or discard the transcript sidecars during review.",
+          required: true,
+        },
+        {
+          id: "inspect_blockers",
+          command: `cat ${shellArg(path.join(outputDir, "asr_fetch_blockers.json"))}`,
+          description: "Inspect ASR fetch blockers when a task is pending, failed, missing, or cannot be downloaded.",
+          required: status !== "asr_results_review_required",
+        },
+      ];
+      if (wantsJson(argv)) {
+        stdout.push(jsonLine({ ok, command: "asr", action, ...result, nextActions }));
+        return { exitCode: ok ? 0 : 1, stdout, stderr };
+      }
+      stdout.push(ok ? "MMI_ASR_FETCH_READY" : "MMI_ASR_FETCH_NEEDS_ATTENTION");
+      stdout.push(`output_dir: ${outputDir}`);
+      stdout.push(`status: ${status}`);
+      stdout.push(`asr_results: ${path.join(outputDir, "asr_results.jsonl")}`);
+      stdout.push(`transcripts: ${path.join(outputDir, "transcripts")}`);
+      stdout.push(`blockers: ${path.join(outputDir, "asr_fetch_blockers.json")}`);
       return { exitCode: ok ? 0 : 1, stdout, stderr };
     }
 

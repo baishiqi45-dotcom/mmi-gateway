@@ -112,4 +112,8 @@ keeping derived material visible as support evidence.
 `mmi perceive` writes under `.mmi/perception/`: `perception_manifest.json`,
 `agent_review_targets.jsonl`, `transcript_sidecars.jsonl`,
 `perception_blockers.json`, `asr_tasks.jsonl`, and optional provider
-observation/review files. It does not alter `packet.json`.
+observation/review files. `mmi asr fetch|poll` adds `asr_results.jsonl`,
+`asr_fetch_manifest.json`, `asr_task_responses/`, and `transcripts/` after
+remote ASR tasks complete, then refreshes the transcript sidecar and agent
+review-target indexes. These files are review inputs and do not alter
+`packet.json`.

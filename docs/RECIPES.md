@@ -101,6 +101,8 @@ npx @mmi/gateway perceive ./my-project/.mmi \
   --target-type video_window \
   --url-map ./urls.jsonl \
   --json
+
+npx @mmi/gateway asr fetch ./my-project/.mmi --wait --json
 ```
 
 Example `urls.jsonl`:
@@ -108,6 +110,11 @@ Example `urls.jsonl`:
 ```jsonl
 {"sourceId":"src_video_001","url":"https://storage.example/clip.mp4"}
 ```
+
+Review `.mmi/perception/asr_results.jsonl` and
+`.mmi/perception/transcripts/` before using transcript text downstream.
+Fetched transcripts are also added back into `transcript_sidecars.jsonl` and
+`agent_review_targets.jsonl`.
 
 When the receiving agent cannot see media, add an explicit visual fallback:
 

@@ -61,6 +61,7 @@ npx @mmi/gateway init --profile openai-compatible --config ./mmi.config.json
 Put secrets in environment variables, not in `mmi.config.json`.
 
 ```bash
+cp .env.example .env
 export DASHSCOPE_API_KEY="..."
 ```
 

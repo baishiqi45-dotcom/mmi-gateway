@@ -13,9 +13,9 @@ async function writeFixtureProject(root: string): Promise<void> {
   await fs.mkdir(path.join(root, "00_PROJECT_FOUNDATION_2026-05-23", "FIELD_VIDEO_INTAKE", "frames", "A"), { recursive: true });
   await fs.mkdir(path.join(root, "video"), { recursive: true });
   await fs.mkdir(path.join(root, ".git"), { recursive: true });
-  await fs.writeFile(path.join(root, "brief.md"), "# Specimen Studio\n\nProject note for local intake.\n", "utf8");
+  await fs.writeFile(path.join(root, "brief.md"), "# Field Site\n\nProject note for local intake.\n", "utf8");
   await fs.writeFile(
-    path.join(root, "photos", "specimen-table.png"),
+    path.join(root, "photos", "raw-capture.png"),
     Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
       "base64",
@@ -458,11 +458,11 @@ describe("mmi CLI", () => {
     const visualLibrary = JSON.parse(await fs.readFile(path.join(outputDir, "visual_asset_library.json"), "utf8")) as {
       assets: Array<{ relativePath: string; assetRole: string; priorityRank: number }>;
     };
-    expect(visualLibrary.assets[0]).toMatchObject({ relativePath: "photos/specimen-table.png", assetRole: "raw_capture", priorityRank: 1 });
+    expect(visualLibrary.assets[0]).toMatchObject({ relativePath: "photos/raw-capture.png", assetRole: "raw_capture", priorityRank: 1 });
     const reviewSurface = await fs.readFile(parsed.humanReviewSurfacePath, "utf8");
     expect(reviewSurface).toContain("First Visual Review");
     expect(reviewSurface).toContain("First Video Window Review");
-    expect(reviewSurface.indexOf("photos/specimen-table.png")).toBeLessThan(reviewSurface.indexOf("A_t000000.jpg"));
+    expect(reviewSurface.indexOf("photos/raw-capture.png")).toBeLessThan(reviewSurface.indexOf("A_t000000.jpg"));
     const gatewayManifest = JSON.parse(await fs.readFile(path.join(outputDir, "gateway_manifest.json"), "utf8")) as {
       files: { projectStartHere: string; topReviewTargets: string };
     };

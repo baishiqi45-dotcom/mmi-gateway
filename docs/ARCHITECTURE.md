@@ -27,6 +27,20 @@ project folder
 This layer is intentionally file-based. It does not start a server, create a
 truth database, or launch provider jobs.
 
+Perception is a post-intake sidecar, not a packet mutation:
+
+```text
+.mmi/top_review_targets.jsonl
+  -> mmi perceive
+  -> agent review targets + transcript sidecars
+  -> optional Paraformer task submission for reviewed URLs
+  -> optional visual provider observations
+  -> perception review queue
+```
+
+Default perception mode is for receiving agents that can inspect local media
+themselves. Qwen visual calls require an explicit `--visual-provider`.
+
 ## Core
 
 The core owns source normalization, provider dispatch, packet assembly, schema
@@ -94,3 +108,8 @@ Project-folder discovery tags sources as `raw_capture`, `original_media`,
 `derived_frame`, `derived_sidecar`, `generated_artifact`, `project_note`, or
 `unknown`. Review surfaces prefer raw captures and original media first while
 keeping derived material visible as support evidence.
+
+`mmi perceive` writes under `.mmi/perception/`: `perception_manifest.json`,
+`agent_review_targets.jsonl`, `transcript_sidecars.jsonl`,
+`perception_blockers.json`, `asr_tasks.jsonl`, and optional provider
+observation/review files. It does not alter `packet.json`.

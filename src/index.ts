@@ -25,6 +25,7 @@ export {
 export { validateSafetyInvariants, validateProviderObservation } from "./invariants.ts";
 export { readCandidatePacket, writeCandidatePacket, type CandidatePacketWriteOptions } from "./packet-io.ts";
 export { writeProjectIntakeArtifacts, type ProjectIntakeOptions, type ProjectIntakeProfile } from "./project-intake.ts";
+export { runProjectPerception, type PerceptionProvider, type PerceptionTargetType, type ProjectPerceptionOptions } from "./perception.ts";
 export {
   discoverProjectSources,
   classifyProjectSource,

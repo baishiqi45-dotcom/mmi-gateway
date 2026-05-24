@@ -54,6 +54,13 @@ describe("mmi CLI", () => {
     expect(parsed.data.version).toBe(parsed.version);
   });
 
+  it("prints help from the intuitive help alias", async () => {
+    const result = await runCli(["help"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.join("\n")).toContain("mmi perceive");
+  });
+
   it("creates a runnable starter project", async () => {
     const outputDir = await tmpDir();
     const configPath = path.join(outputDir, "starter", "mmi.config.json");
@@ -462,6 +469,67 @@ describe("mmi CLI", () => {
     expect(gatewayManifest.files).toMatchObject({ projectStartHere: "START_HERE.md", topReviewTargets: "top_review_targets.jsonl" });
     const blockerReport = await fs.readFile(parsed.blockerReportPath, "utf8");
     expect(blockerReport).toContain("Local private media was not uploaded automatically");
+  });
+
+  it("builds an agent-first perception bundle without calling a visual provider", async () => {
+    const projectRoot = await tmpDir();
+    await writeFixtureProject(projectRoot);
+    const outputDir = path.join(projectRoot, ".mmi");
+    await runCli(["ingest-project", projectRoot, "--out", outputDir, "--no-keyframes", "--json"]);
+
+    const result = await runCli(["perceive", outputDir, "--limit", "3", "--no-keyframes", "--json"]);
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout.join("\n")) as {
+      ok: boolean;
+      mode: string;
+      outputDir: string;
+      counts: { agentReviewTargets: number; observations: number };
+      boundary: { defaultVisualApiUpload: boolean; canonicalPacketMutated: boolean };
+    };
+    expect(parsed).toMatchObject({
+      ok: true,
+      mode: "agent_review_first",
+      boundary: { defaultVisualApiUpload: false, canonicalPacketMutated: false },
+    });
+    expect(parsed.counts.agentReviewTargets).toBeGreaterThan(0);
+    expect(parsed.counts.observations).toBe(0);
+    await expect(fs.stat(path.join(outputDir, "perception", "agent_review_targets.jsonl"))).resolves.toBeDefined();
+    await expect(fs.stat(path.join(outputDir, "packet.json"))).resolves.toBeDefined();
+  });
+
+  it("keeps optional visual provider perception separate from the canonical packet", async () => {
+    const projectRoot = await tmpDir();
+    await writeFixtureProject(projectRoot);
+    const outputDir = path.join(projectRoot, ".mmi");
+    await runCli(["ingest-project", projectRoot, "--out", outputDir, "--no-keyframes", "--json"]);
+
+    const result = await runCli(["perceive", outputDir, "--visual-provider", "mock", "--limit", "1", "--no-keyframes", "--json"]);
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout.join("\n")) as { mode: string; counts: { observations: number; perceivedAtoms: number } };
+    expect(parsed.mode).toBe("provider_assisted_optional_visual");
+    expect(parsed.counts).toMatchObject({ observations: 1, perceivedAtoms: 1 });
+    const observation = await fs.readFile(path.join(outputDir, "perception", "provider_observations.jsonl"), "utf8");
+    expect(observation).toContain("Mock provider perception");
+    await expect(fs.stat(path.join(outputDir, "packet.json"))).resolves.toBeDefined();
+  });
+
+  it("reports local-video ASR blockers instead of pretending Paraformer can read local files", async () => {
+    const projectRoot = await tmpDir();
+    await writeFixtureProject(projectRoot);
+    const outputDir = path.join(projectRoot, ".mmi");
+    await runCli(["ingest-project", projectRoot, "--out", outputDir, "--no-keyframes", "--json"]);
+
+    const result = await runCli(["perceive", outputDir, "--asr", "--target-type", "video_window", "--limit", "1", "--no-keyframes", "--json"]);
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout.join("\n")) as { status: string; counts: { blockers: number; asrTasks: number } };
+    expect(parsed.status).toBe("agent_review_bundle_ready_with_blockers");
+    expect(parsed.counts.asrTasks).toBe(0);
+    expect(parsed.counts.blockers).toBeGreaterThan(0);
+    const blockers = await fs.readFile(path.join(outputDir, "perception", "perception_blockers.json"), "utf8");
+    expect(blockers).toContain("Paraformer ASR REST submission needs an HTTP(S) or OSS URL");
   });
 
   it("summarizes project review decisions without mutating the candidate packet", async () => {

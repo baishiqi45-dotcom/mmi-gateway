@@ -79,6 +79,47 @@ npx @mmi/gateway review ./my-project/.mmi \
   --json
 ```
 
+## Agent Review Perception
+
+Use this after `ingest-project` when an agent can inspect local images/video
+itself and mainly needs a good target list, transcript sidecars, ASR blockers,
+and optional keyframes:
+
+```bash
+npx @mmi/gateway perceive ./my-project/.mmi --json
+```
+
+This writes `.mmi/perception/agent_review_targets.jsonl` and does not call a
+visual provider by default.
+
+For audio or speech extraction through DashScope Paraformer, give MMI reviewed
+remote URLs:
+
+```bash
+npx @mmi/gateway perceive ./my-project/.mmi \
+  --asr \
+  --target-type video_window \
+  --url-map ./urls.jsonl \
+  --json
+```
+
+Example `urls.jsonl`:
+
+```jsonl
+{"sourceId":"src_video_001","url":"https://storage.example/clip.mp4"}
+```
+
+When the receiving agent cannot see media, add an explicit visual fallback:
+
+```bash
+npx @mmi/gateway perceive ./my-project/.mmi \
+  --visual-provider dashscope \
+  --target-type image \
+  --limit 3 \
+  --allow-local-media \
+  --json
+```
+
 ## Remote Media URL
 
 Provider dispatch should receive reviewed remote URLs or signed URLs, not raw

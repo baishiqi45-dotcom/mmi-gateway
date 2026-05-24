@@ -10,6 +10,7 @@ import { ERROR_CATALOG, MmiGatewayError, issueWithRecovery, recoveryForIssue, re
 import { sourceInputSchema, sourceManifestSchema } from "./schema.ts";
 import { discoverProjectSources } from "./source-discovery.ts";
 import { writeProjectIntakeArtifacts, type ProjectIntakeProfile } from "./project-intake.ts";
+import { runProjectPerception, type PerceptionProvider, type PerceptionTargetType } from "./perception.ts";
 import { applyReviewDecisions, summarizeReviewQueue } from "./review-decisions.ts";
 import { MMI_GATEWAY_PACKAGE_VERSION, type GatewayIssue, type PacketProfile, type ProviderHealth, type SourceInput, type SourceType } from "./types.ts";
 
@@ -53,6 +54,16 @@ const RECIPES = [
       "mmi ingest-project ./my-project --profile creative-project --out ./my-project/.mmi --dry-run --json",
       "mmi ingest-project ./my-project --profile creative-project --out ./my-project/.mmi --json",
       "mmi review ./my-project/.mmi --json",
+    ],
+  },
+  {
+    id: "agent-review-perception",
+    description: "Build an agent-readable perception bundle, optionally submitting ASR or visual fallback provider calls.",
+    docs: "docs/RECIPES.md#agent-review-perception",
+    commands: [
+      "mmi perceive ./my-project/.mmi --no-keyframes --json",
+      "mmi perceive ./my-project/.mmi --asr --target-type video_window --url-map ./urls.jsonl --json",
+      "mmi perceive ./my-project/.mmi --visual-provider dashscope --target-type image --allow-local-media --limit 3 --json",
     ],
   },
   {
@@ -361,6 +372,7 @@ function help(): string {
     "  mmi init [--config mmi.config.json] [--profile generic|agent|dashscope|openai-compatible] [--starter] [--json]",
     "  mmi ingest [--config mmi.config.json] [--provider manual|mock|dashscope] [--out dir] [--project-id id] [--prompt value] [--text value] [--file path] [--url url] [--sources file.json|file.jsonl] [--stdin-json|--stdin-jsonl] [--json]",
     "  mmi ingest-project <folder> [--profile creative-project|field-video-project-base|visual-asset-library-only] [--out dir] [--dry-run] [--extract-keyframes] [--json]",
+    "  mmi perceive <project-intake-dir> [--asr] [--url-map urls.jsonl] [--visual-provider mock|dashscope] [--target-type image|video_window|audio|text_excerpt] [--allow-local-media] [--max-local-image-bytes n] [--no-keyframes] [--json]",
     "  mmi review <project-intake-dir> [--decisions review_decisions.jsonl] [--json]",
     "  mmi validate <packet-dir-or-packet.json>",
     "  mmi handoff <packet-dir-or-packet.json> [--json]",
@@ -432,6 +444,31 @@ function isConfigProfile(value: string): value is ConfigProfile {
 
 function isProjectIntakeProfile(value: string): value is ProjectIntakeProfile {
   return ["creative-project", "creative_project_foundation", "field-video-project-base", "visual-asset-library-only"].includes(value);
+}
+
+function isPerceptionProvider(value: string): value is PerceptionProvider {
+  return value === "dashscope" || value === "mock";
+}
+
+function parsePerceptionProvider(value: string | undefined): PerceptionProvider | undefined {
+  if (!value) return undefined;
+  if (!isPerceptionProvider(value)) throw new MmiGatewayError(`unsupported visual provider: ${value}`, "invalid_cli");
+  return value;
+}
+
+function isPerceptionTargetType(value: string): value is PerceptionTargetType {
+  return value === "image" || value === "video_window" || value === "audio" || value === "text_excerpt" || value === "blocker";
+}
+
+function parsePerceptionTargetTypes(argv: string[]): PerceptionTargetType[] | undefined {
+  const values = valuesAfter(argv, "--target-type")
+    .flatMap((value) => value.split(","))
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (values.length === 0) return undefined;
+  const unsupported = values.find((value) => !isPerceptionTargetType(value));
+  if (unsupported) throw new MmiGatewayError(`unsupported target type: ${unsupported}`, "invalid_cli");
+  return values as PerceptionTargetType[];
 }
 
 function packetProfileForProject(profile: ProjectIntakeProfile): PacketProfile {
@@ -590,6 +627,12 @@ async function runSelftest(): Promise<{
     .then(() => true)
     .catch(() => false);
   checks.push({ id: "project_folder_intake", ok: project.exitCode === 0 && projectReviewExists, detail: summarize(project) });
+  const perceive = await runCli(["perceive", projectRunDir, "--limit", "2", "--no-keyframes", "--json"]);
+  const perceiveManifestExists = await fs
+    .stat(path.join(projectRunDir, "perception", "perception_manifest.json"))
+    .then(() => true)
+    .catch(() => false);
+  checks.push({ id: "agent_review_perception", ok: perceive.exitCode === 0 && perceiveManifestExists, detail: summarize(perceive) });
 
   const secretPath = path.join(root, "secret-sources.json");
   await fs.writeFile(
@@ -625,7 +668,7 @@ export async function runCli(argv = process.argv.slice(2)): Promise<CliResult> {
   const stdout: string[] = [];
   const stderr: string[] = [];
   const command = argv[0];
-  if (!command || command === "--help" || command === "-h") return { exitCode: 0, stdout: [help()], stderr };
+  if (!command || command === "--help" || command === "-h" || command === "help") return { exitCode: 0, stdout: [help()], stderr };
   if (command === "--version" || command === "-v" || command === "-V" || command === "version") {
     if (wantsJson(argv)) {
       stdout.push(jsonLine({ ok: true, command: "version", name: MMI_GATEWAY_PACKAGE_NAME, version: MMI_GATEWAY_PACKAGE_VERSION }));
@@ -742,6 +785,64 @@ export async function runCli(argv = process.argv.slice(2)): Promise<CliResult> {
       stdout.push(`run_dir: ${path.resolve(target)}`);
       if (decisionsPath) stdout.push(`summary: ${path.join(path.resolve(target), "review_decision_summary.json")}`);
       return { exitCode: 0, stdout, stderr };
+    }
+
+    if (command === "perceive") {
+      const target = argv[1] ?? valueAfter(argv, "--project-intake-dir") ?? valueAfter(argv, "--run-dir");
+      if (!target) return cliError(argv, command, "missing project intake directory");
+      const visualProvider = parsePerceptionProvider(valueAfter(argv, "--visual-provider") ?? (argv.includes("--qwen-visual") ? "dashscope" : undefined) ?? valueAfter(argv, "--provider"));
+      const result = await runProjectPerception(target, {
+        visualProvider,
+        outputDir: valueAfter(argv, "--out") ?? valueAfter(argv, "--output-dir"),
+        urlMapPath: valueAfter(argv, "--url-map"),
+        targetIds: valuesAfter(argv, "--target-id"),
+        targetTypes: parsePerceptionTargetTypes(argv),
+        limit: numberAfter(argv, "--limit", 8),
+        dryRun: argv.includes("--dry-run"),
+        allowLocalMedia: argv.includes("--allow-local-media"),
+        extractKeyframes: !argv.includes("--no-keyframes"),
+        maxLocalImageBytes: numberAfter(argv, "--max-local-image-bytes", 10 * 1024 * 1024),
+        maxVideoFrames: numberAfter(argv, "--max-video-frames", 3),
+        fps: numberAfter(argv, "--fps", 1),
+        prompt: valueAfter(argv, "--prompt"),
+        asr: argv.includes("--asr"),
+        asrModel: valueAfter(argv, "--asr-model"),
+        model: valueAfter(argv, "--model"),
+        baseUrl: valueAfter(argv, "--base-url"),
+        apiKeyEnv: valueAfter(argv, "--api-key-env"),
+      });
+      const status = typeof result.status === "string" ? result.status : "unknown";
+      const ok = status !== "perception_needs_attention";
+      const outputDir = typeof result.outputDir === "string" ? result.outputDir : path.join(path.resolve(target), "perception");
+      const nextActions = [
+        {
+          id: "agent_review",
+          description: "Open agent_review_targets.jsonl and inspect local media/transcripts with the receiving agent.",
+          required: true,
+        },
+        {
+          id: "asr_remote_url",
+          command: `mmi perceive ${shellArg(path.resolve(target))} --asr --url-map ./urls.jsonl --json`,
+          description: "Use this when local audio/video needs Paraformer and you have reviewed HTTP(S) or OSS URLs.",
+          required: false,
+        },
+        {
+          id: "visual_fallback",
+          command: `mmi perceive ${shellArg(path.resolve(target))} --visual-provider dashscope --target-type image --limit 3 --json`,
+          description: "Use only when the receiving agent cannot inspect the media itself or you explicitly want provider perception.",
+          required: false,
+        },
+      ];
+      if (wantsJson(argv)) {
+        stdout.push(jsonLine({ ok, command: "perceive", ...result, nextActions }));
+        return { exitCode: ok ? 0 : 1, stdout, stderr };
+      }
+      stdout.push(ok ? "MMI_PERCEPTION_READY" : "MMI_PERCEPTION_NEEDS_ATTENTION");
+      stdout.push(`output_dir: ${outputDir}`);
+      stdout.push(`status: ${status}`);
+      stdout.push(`agent_review_targets: ${path.join(outputDir, "agent_review_targets.jsonl")}`);
+      stdout.push(`blockers: ${path.join(outputDir, "perception_blockers.json")}`);
+      return { exitCode: ok ? 0 : 1, stdout, stderr };
     }
 
     const configPath = valueAfter(argv, "--config");

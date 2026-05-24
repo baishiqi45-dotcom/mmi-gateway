@@ -1,6 +1,6 @@
 export const MMI_GATEWAY_PACKET_SCHEMA = "mmi.gateway.packet" as const;
 export const MMI_GATEWAY_PACKET_SCHEMA_VERSION = "1.0.0" as const;
-export const MMI_GATEWAY_PACKAGE_VERSION = "0.5.0" as const;
+export const MMI_GATEWAY_PACKAGE_VERSION = "0.6.0" as const;
 
 export const REQUIRED_NON_CLAIMS = [
   "not_source_truth",

@@ -61,6 +61,41 @@ available, MMI uses it for local video metadata. Keyframe extraction is
 opt-in with `--extract-keyframes`; otherwise video windows stay as lightweight
 review scaffolds.
 
+When the receiving agent can inspect images/video locally, use the agent-first
+perception bundle instead of uploading long media to a provider:
+
+```bash
+npx @mmi/gateway perceive ./my-project/.mmi --json
+```
+
+This writes `.mmi/perception/agent_review_targets.jsonl`,
+`.mmi/perception/transcript_sidecars.jsonl`, `.mmi/perception/perception_manifest.json`,
+and clear blockers if audio/video needs a remote ASR route. It does not mutate
+`packet.json`, and it does not call Qwen or upload visual media by default.
+
+For speech extraction with DashScope Paraformer, provide reviewed HTTP(S) or
+OSS URLs for selected audio/video targets:
+
+```bash
+npx @mmi/gateway perceive ./my-project/.mmi \
+  --asr \
+  --target-type video_window \
+  --url-map ./urls.jsonl \
+  --json
+```
+
+Use Qwen visual perception only as an explicit fallback, for example when the
+next agent cannot view the media itself:
+
+```bash
+npx @mmi/gateway perceive ./my-project/.mmi \
+  --visual-provider dashscope \
+  --target-type image \
+  --allow-local-media \
+  --limit 3 \
+  --json
+```
+
 After a project intake run, another agent can start with:
 
 ```bash
@@ -139,6 +174,13 @@ Core ships with:
 - `mock`: deterministic provider for examples and CI
 - `dashscope`: Qwen-Omni OpenAI-compatible inspection for public or signed text/image/audio/video URLs
 - `openai-compatible`: generic `/chat/completions` adapter for compatible APIs
+
+`mmi perceive` is separate from the generic provider adapter. Its default mode
+is `agent_review_first`: it builds local review targets and transcript/ASR
+pointers for agents like Codex that can inspect media directly. `--asr`
+submits Paraformer tasks only for reviewed remote URLs, and
+`--visual-provider dashscope` opts into Qwen visual perception for selected
+targets.
 
 | Provider | API key | Network | Local files | Best use |
 | --- | --- | --- | --- | --- |
@@ -241,6 +283,7 @@ Helpful CLI utilities:
 
 - `mmi explain <issue-code>` prints the recovery path for an issue.
 - `mmi ingest-project <folder>` scans a local project folder and writes visual/video/project-foundation review artifacts.
+- `mmi perceive <project-intake-dir>` writes an agent-readable perception bundle, with optional ASR and visual-provider fallback.
 - `mmi review <project-intake-dir>` summarizes or applies filled review decisions.
 - `mmi recipes --json` lists copy-pasteable integration flows.
 - `mmi schema --kind source-manifest` prints the source manifest JSON Schema.

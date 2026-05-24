@@ -9,6 +9,7 @@ For a messy local project folder, start here:
 ```bash
 npx @mmi/gateway ingest-project ./project --out ./project/.mmi --dry-run --json
 npx @mmi/gateway ingest-project ./project --out ./project/.mmi --json
+npx @mmi/gateway perceive ./project/.mmi --json
 npx @mmi/gateway review ./project/.mmi --json
 npx @mmi/gateway validate ./project/.mmi --json
 ```
@@ -60,6 +61,63 @@ For `ingest-project`:
 `source_manifest.json` metadata includes `originKind`, `assetRole`, and
 `assetRoleReason`. Treat `raw_capture` and `original_media` as better first
 review candidates than `derived_frame` or `generated_artifact`.
+
+## Perception Bundle
+
+Use `mmi perceive` after `ingest-project` when the next agent needs a tighter
+review bundle:
+
+```bash
+npx @mmi/gateway perceive ./project/.mmi --json
+```
+
+Default mode is `agent_review_first`. It reads `top_review_targets.jsonl` and
+`source_manifest.json`, then writes under `.mmi/perception/`:
+
+1. `perception_manifest.json`
+2. `agent_review_targets.jsonl`
+3. `transcript_sidecars.jsonl`
+4. `perception_blockers.json`
+5. `asr_tasks.jsonl`
+6. `provider_observations.jsonl`
+7. `perceived_atoms.ndjson`
+8. `perception_review_queue.jsonl`
+
+For Codex-like agents that can inspect local media, start with
+`agent_review_targets.jsonl`, open the referenced image/video/keyframe paths,
+and compare them against transcript sidecars. Do not upload long videos to a
+provider just to duplicate what the receiving agent can already inspect.
+
+Use ASR only when you have reviewed remote URLs:
+
+```bash
+npx @mmi/gateway perceive ./project/.mmi \
+  --asr \
+  --target-type video_window \
+  --url-map ./urls.jsonl \
+  --json
+```
+
+`urls.jsonl` can map either `sourceId` or `targetId`:
+
+```jsonl
+{"sourceId":"src_video_001","url":"https://storage.example/clip.mp4"}
+```
+
+Use visual provider fallback only when the receiving agent cannot inspect media
+itself, or when the user explicitly wants provider perception:
+
+```bash
+npx @mmi/gateway perceive ./project/.mmi \
+  --visual-provider dashscope \
+  --target-type image \
+  --limit 3 \
+  --allow-local-media \
+  --json
+```
+
+`perceive` never mutates `packet.json`; provider observations stay in
+`.mmi/perception/` and remain pending review.
 
 For plain `ingest`:
 

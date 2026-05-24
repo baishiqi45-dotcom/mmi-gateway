@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0
+
+- Added `mmi perceive` as an agent-first perception bundle for project intake outputs.
+- Added `.mmi/perception/agent_review_targets.jsonl`, transcript sidecar indexing, ASR task/blocker files, optional provider observations, and provider perception review queues.
+- Added explicit DashScope Paraformer ASR submission for reviewed HTTP(S)/OSS URLs via `--asr` and `--url-map`.
+- Added optional Qwen visual fallback with `--visual-provider dashscope`; visual provider calls are not made by default.
+- Exported `runProjectPerception()` for SDK callers and added perception tests/docs.
+
 ## 0.5.0
 
 - Added raw/derived/generated project source classification for local folder intake.

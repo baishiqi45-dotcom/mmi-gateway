@@ -6,12 +6,15 @@ This package is structured so it can become a standalone open-source project.
 
 - Standalone TypeScript package boundary at the repository root.
 - MIT license.
-- CLI with `init`, `init --starter`, `doctor`, `providers`, `ingest`, and `validate`.
+- CLI with `init`, `init --starter`, `doctor`, `providers`, `ingest`,
+  `ingest-project`, `perceive`, `review`, and `validate`.
 - CLI recipe discovery with `mmi recipes --json`.
 - Agent-readable `--json`, `nextCommands`, `--sources-json`, `--sources` JSONL,
   `--stdin-json`, `--stdin-jsonl`, `handoff`, and `explain` surfaces.
 - Local project-folder intake with raw/derived/generated source classification,
   top review targets, and a file-based review decision loop.
+- Agent-first perception bundle with optional ASR submission and optional visual
+  provider fallback, kept outside the canonical packet.
 - SDK entry points with typed providers and stable packet readers/writers.
 - Versioned JSON Schema at `schemas/v1/candidate-packet.schema.json`.
 - Source manifest JSON Schema for upstream systems.
@@ -22,7 +25,8 @@ This package is structured so it can become a standalone open-source project.
 ## Still Intentional Boundaries
 
 - Local private media upload is blocked until a reviewed storage adapter creates a signed URL.
-- ASR/transcription pipelines are provider or storage extensions, not core.
+- Local ASR/transcription extraction is not hidden in core; Paraformer task
+  submission requires reviewed HTTP(S)/OSS URLs.
 - Provider observations are candidate perceptions, not validation.
 - Project-specific adapters should live outside the core package.
 - `mmi review` summarizes decisions but does not certify truth or mutate
@@ -38,6 +42,7 @@ This package is structured so it can become a standalone open-source project.
 - Run `node dist/cli.js validate /tmp/mmi-release-smoke --json`.
 - Run `node dist/cli.js handoff /tmp/mmi-release-smoke --json`.
 - Run `node dist/cli.js recipes --json`.
+- Run `node dist/cli.js perceive <fixture-project>/.mmi --no-keyframes --json`.
 - Run `npm pack --dry-run`.
 - Install the packed tarball in a temporary project and run `npx mmi doctor`, `npx mmi ingest`, and `npx mmi validate`.
 - Smoke the custom provider module example from the packed package.

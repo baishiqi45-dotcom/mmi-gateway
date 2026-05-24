@@ -72,6 +72,33 @@ const summary = await applyReviewDecisions("./project/.mmi", "./project/.mmi/rev
 The review decision helper writes summaries such as `accepted_atoms.jsonl` and
 `review_decision_summary.json` without mutating `packet.json`.
 
+## Project Perception Helper
+
+```ts
+import { runProjectPerception } from "@mmi/gateway";
+
+const result = await runProjectPerception("./project/.mmi", {
+  asr: true,
+  targetTypes: ["video_window"],
+  urlMapPath: "./urls.jsonl",
+});
+```
+
+This helper powers `mmi perceive`. It consumes an existing `ingest-project`
+directory and writes sidecar files under `.mmi/perception/`. The default mode is
+agent-first: it creates `agent_review_targets.jsonl` and
+`transcript_sidecars.jsonl` for a receiving agent that can inspect local media
+itself. It does not call a visual provider unless `visualProvider` is set.
+
+Set `asr: true` to submit DashScope Paraformer tasks for reviewed HTTP(S) or
+OSS URLs. Direct local audio/video paths are reported in
+`perception_blockers.json` with recovery instructions instead of being silently
+uploaded.
+
+Set `visualProvider: "dashscope"` only when a provider visual pass is useful.
+Provider observations, perceived atoms, and their review queue stay in
+`.mmi/perception/` and do not mutate the canonical `packet.json`.
+
 ## CLI JSON Contract
 
 All `--json` CLI responses include:

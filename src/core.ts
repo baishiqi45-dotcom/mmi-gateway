@@ -155,6 +155,7 @@ function observationToAtom(source: NormalizedSource, observation: ProviderObserv
     locator: {
       uri: source.uri,
       range: TEXT_LIKE_TYPES.has(source.type) ? "text_or_pointer:whole_source" : "media_pointer:whole_source",
+      kind: TEXT_LIKE_TYPES.has(source.type) ? "whole_source" : "file_pointer",
     },
     content: observation.content.slice(0, 16000),
     extractionMethod: observation.providerId === "manual" ? "manual_or_pointer_intake" : "provider_candidate_probe",
@@ -200,15 +201,20 @@ function buildReviewItems(claims: ClaimCandidate[]): ReviewItem[] {
 }
 
 function buildSourceMatrixItems(sources: NormalizedSource[], atoms: EvidenceAtom[], claims: ClaimCandidate[]): SourceMatrixItem[] {
-  return sources.map((source, index) => ({
+  return sources.map((source, index) => {
+    const sourceAtoms = atoms.filter((atom) => atom.sourceId === source.id);
+    const sourceAtomIds = sourceAtoms.map((atom) => atom.id);
+    const linkedClaimIds = claims.filter((claim) => claim.evidenceAtomIds.some((atomId) => sourceAtomIds.includes(atomId))).map((claim) => claim.id);
+    return {
     id: `matrix_${String(index + 1).padStart(3, "0")}`,
     sourceId: source.id,
     sourceType: source.type,
-    evidenceAtomIds: atoms[index] ? [atoms[index].id] : [],
-    linkedClaimIds: claims[index] ? [claims[index].id] : [],
+    evidenceAtomIds: sourceAtomIds,
+    linkedClaimIds,
     allowedUse: "candidate source inventory row after review",
     deniedUse: "not source-matrix binding",
-  }));
+  };
+  });
 }
 
 function executionMode(providerIds: string[]): ExecutionMode {

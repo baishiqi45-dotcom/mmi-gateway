@@ -23,6 +23,34 @@ npm run build
 
 ## Quickstart
 
+Local project-folder intake, no API key:
+
+```bash
+npx @mmi/gateway ingest-project ./my-project \
+  --profile creative-project \
+  --out ./my-project/.mmi \
+  --json
+```
+
+This creates the usual candidate packet plus practical local review artifacts:
+
+- `project_intake_manifest.json`
+- `visual_asset_library.json`
+- `visual_contact_sheet.html`
+- `video_window_review_matrix.json`
+- `atoms.ndjson`
+- `review_queue.jsonl`
+- `object_evidence_ledger.json`
+- `term_correction_queue.jsonl`
+- `project_foundation_candidate.json`
+- `human_review_surface.md`
+- `gap_and_blocker_report.md`
+
+Local private media is not uploaded automatically. If `ffprobe` or `ffmpeg` is
+available, MMI uses it for local video metadata and optional keyframe
+extraction; otherwise it writes explicit blockers and still produces review
+windows.
+
 One-minute starter path:
 
 ```bash
@@ -189,6 +217,7 @@ Schema imports:
 Helpful CLI utilities:
 
 - `mmi explain <issue-code>` prints the recovery path for an issue.
+- `mmi ingest-project <folder>` scans a local project folder and writes visual/video/project-foundation review artifacts.
 - `mmi recipes --json` lists copy-pasteable integration flows.
 - `mmi schema --kind source-manifest` prints the source manifest JSON Schema.
 - `mmi selftest --json` runs a no-network ingest/validate/manifest/secret-fail-closed smoke test.

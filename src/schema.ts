@@ -63,6 +63,22 @@ export const EvidenceAtomSchema = z.object({
   locator: z.object({
     uri: z.string().min(1),
     range: z.string().min(1),
+    kind: z.enum(["whole_source", "file_pointer", "text_range", "timecode", "image_region"]).optional(),
+    startMs: z.number().nonnegative().optional(),
+    endMs: z.number().nonnegative().optional(),
+    lineStart: z.number().int().positive().optional(),
+    lineEnd: z.number().int().positive().optional(),
+    page: z.number().int().positive().optional(),
+    frameId: z.string().min(1).optional(),
+    region: z
+      .object({
+        x: z.number(),
+        y: z.number(),
+        width: z.number().positive(),
+        height: z.number().positive(),
+        unit: z.enum(["pixel", "ratio"]),
+      })
+      .optional(),
   }),
   content: z.string().min(1),
   extractionMethod: z.string().min(1),
@@ -108,7 +124,7 @@ export const SourceMatrixItemSchema = z.object({
   id: z.string().min(1),
   sourceId: z.string().min(1),
   sourceType: SourceTypeSchema,
-  evidenceAtomIds: z.array(z.string().min(1)).min(1),
+  evidenceAtomIds: z.array(z.string().min(1)),
   linkedClaimIds: z.array(z.string().min(1)),
   allowedUse: z.string().min(1),
   deniedUse: z.string().min(1),

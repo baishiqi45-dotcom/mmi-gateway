@@ -4,6 +4,19 @@ This guide is for agents and automation scripts that need a stable contract.
 
 ## Minimal Flow
 
+For a messy local project folder, start here:
+
+```bash
+npx @mmi/gateway ingest-project ./project --out ./project/.mmi --dry-run --json
+npx @mmi/gateway ingest-project ./project --out ./project/.mmi --json
+npx @mmi/gateway validate ./project/.mmi --json
+```
+
+Read `human_review_surface.md`, `project_intake_manifest.json`, and
+`gap_and_blocker_report.md` before opening the raw folder again.
+
+For an already curated source manifest:
+
 ```bash
 npx @mmi/gateway doctor --json
 npx @mmi/gateway selftest --json
@@ -26,6 +39,20 @@ jq -c '.sources[]' sources.json | npx @mmi/gateway ingest --stdin-jsonl --out ./
 ```
 
 ## What To Read
+
+For `ingest-project`:
+
+1. `project_intake_manifest.json`
+2. `human_review_surface.md`
+3. `visual_contact_sheet.html`
+4. `video_window_review_matrix.json`
+5. `atoms.ndjson`
+6. `review_queue.jsonl`
+7. `gap_and_blocker_report.md`
+8. `packet.json`
+9. `agent_handoff.md`
+
+For plain `ingest`:
 
 1. `gateway_manifest.json`
 2. `issues.json`

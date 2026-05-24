@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0
+
+- Added `mmi ingest-project <folder>` for local-first project folder intake.
+- Added recursive source discovery with safe defaults for common media and document files.
+- Added project review artifacts: visual asset library, contact sheet HTML, video window review matrix, project atoms, review queue, object/evidence ledger, term correction queue, project foundation candidate, and blocker report.
+- Added graceful local video degradation when `ffprobe`/`ffmpeg` is missing or cannot read a file.
+- Fixed source matrix row linking so rows map by `sourceId` instead of array position.
+
 ## 0.3.0
 
 - Added recipe discovery with `mmi recipes --json`.

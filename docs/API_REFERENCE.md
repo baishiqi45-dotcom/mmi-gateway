@@ -38,6 +38,23 @@ The writer emits `gateway_manifest.json`, `packet.json`, `sources.json`,
 `source_matrix.json`, `issues.json`, `agent_handoff.md`, and `README.md`.
 Agents should read `gateway_manifest.json` first.
 
+## Project Folder Intake Helpers
+
+```ts
+import { discoverProjectSources, writeProjectIntakeArtifacts } from "@mmi/gateway";
+
+const discovery = await discoverProjectSources("./project");
+
+await writeProjectIntakeArtifacts(discovery, {
+  outputDir: "./project/.mmi",
+  profile: "creative-project",
+});
+```
+
+These helpers power `mmi ingest-project`. They are local-first and file-based:
+they can call local `ffprobe`/`ffmpeg` when available, but they do not upload
+local private media or promote project truth.
+
 ## CLI JSON Contract
 
 All `--json` CLI responses include:

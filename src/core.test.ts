@@ -218,6 +218,48 @@ describe("mmi-gateway core", () => {
     expect(result.packet.evidenceAtoms).toHaveLength(0);
   });
 
+  it("links source matrix rows by source id instead of array position", async () => {
+    const gateway = createGateway({
+      defaultProvider: "wrong-provider",
+      providers: [
+        createManualProvider(),
+        {
+          apiVersion: 1,
+          id: "wrong-provider",
+          displayName: "Wrong provider",
+          capabilities: {
+            sourceTypes: ["text"],
+            acceptsLocalFiles: false,
+            acceptsRemoteUrls: true,
+            acceptsDataUrls: false,
+          },
+          async inspect() {
+            return {
+              sourceId: "not-the-source",
+              providerId: "wrong-provider",
+              content: "Wrong identity observation.",
+              confidence: 0.5,
+              confidenceBasis: "Intentional mismatch for matrix test.",
+            };
+          },
+        },
+      ],
+    });
+
+    const result = await gateway.run({
+      sources: [
+        { id: "bad-first", type: "text", text: "This provider response will be rejected.", provider: "wrong-provider" },
+        { id: "good-second", type: "text", text: "Manual fallback source.", provider: "manual" },
+      ],
+      write: false,
+    });
+
+    expect(result.packet.evidenceAtoms).toHaveLength(1);
+    expect(result.packet.evidenceAtoms[0]).toMatchObject({ sourceId: "good-second" });
+    expect(result.packet.sourceMatrix.items[0]).toMatchObject({ sourceId: "bad-first", evidenceAtomIds: [], linkedClaimIds: [] });
+    expect(result.packet.sourceMatrix.items[1]?.evidenceAtomIds).toEqual([result.packet.evidenceAtoms[0]?.id]);
+  });
+
   it("writes a portable packet directory", async () => {
     const outputDir = await tmpDir();
     const gateway = createGateway({
@@ -267,6 +309,21 @@ describe("mmi-gateway core", () => {
     );
     await expect(fs.stat(path.join(outputDir, "packet.json"))).rejects.toThrow();
     await expect(fs.stat(path.join(outputDir, "run_error.json"))).resolves.toBeDefined();
+  });
+
+  it("does not treat ordinary words containing sk- as API keys", async () => {
+    const gateway = createGateway({
+      defaultProvider: "manual",
+      providers: [createManualProvider()],
+    });
+
+    const result = await gateway.run({
+      sources: [{ type: "text", text: "Reference URL slug: ask-a-scientist-3" }],
+      write: false,
+    });
+
+    expect(result.issues).toEqual([]);
+    expect(result.packet.evidenceAtoms[0]?.content).toContain("ask-a-scientist-3");
   });
 
   it("lets a storage plugin convert local private media into a signed URL before provider dispatch", async () => {

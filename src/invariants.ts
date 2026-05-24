@@ -11,7 +11,7 @@ const FORBIDDEN_STATUS_WORDS = new Set([
   "validated",
 ]);
 
-const SECRET_VALUE_PATTERNS = [/Bearer\s+[A-Za-z0-9._-]{12,}/i, /sk-[A-Za-z0-9_-]{12,}/i];
+const SECRET_VALUE_PATTERNS = [/Bearer\s+[A-Za-z0-9._-]{12,}/i, /\bsk-[A-Za-z0-9_-]{12,}/i];
 
 const SECRET_KEY_PATTERNS = [
   /api[_-]?key/i,

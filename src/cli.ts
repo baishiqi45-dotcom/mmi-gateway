@@ -8,7 +8,9 @@ import { candidatePacketJsonSchema, createGateway, readPacket, sourceManifestJso
 import { DEFAULT_CONFIG_FILE, findConfig, gatewayConfigFromFileAsync, readConfig, writeDefaultConfig, type ConfigProfile } from "./config.ts";
 import { ERROR_CATALOG, MmiGatewayError, issueWithRecovery, recoveryForIssue, redactSensitiveText, sanitizeIssue } from "./errors.ts";
 import { sourceInputSchema, sourceManifestSchema } from "./schema.ts";
-import { MMI_GATEWAY_PACKAGE_VERSION, type GatewayIssue, type ProviderHealth, type SourceInput, type SourceType } from "./types.ts";
+import { discoverProjectSources } from "./source-discovery.ts";
+import { writeProjectIntakeArtifacts, type ProjectIntakeProfile } from "./project-intake.ts";
+import { MMI_GATEWAY_PACKAGE_VERSION, type GatewayIssue, type PacketProfile, type ProviderHealth, type SourceInput, type SourceType } from "./types.ts";
 
 export type CliResult = {
   exitCode: number;
@@ -43,6 +45,15 @@ const RECIPES = [
     commands: ["mmi ingest --stdin-jsonl --out ./mmi-runs/jsonl-run --json", "mmi validate ./mmi-runs/jsonl-run --json"],
   },
   {
+    id: "local-project-folder-intake",
+    description: "Scan a local project folder and write visual/video/project-foundation review artifacts.",
+    docs: "docs/RECIPES.md#local-project-folder-intake",
+    commands: [
+      "mmi ingest-project ./my-project --profile creative-project --out ./my-project/.mmi --dry-run --json",
+      "mmi ingest-project ./my-project --profile creative-project --out ./my-project/.mmi --json",
+    ],
+  },
+  {
     id: "custom-provider-module",
     description: "Load a local ProviderAdapter module through mmi.config.json.",
     docs: "examples/custom-provider-module/README.md",
@@ -69,6 +80,14 @@ function valuesAfter(argv: string[], name: string): string[] {
 
 function valueAfter(argv: string[], name: string): string | undefined {
   return valuesAfter(argv, name)[0];
+}
+
+function numberAfter(argv: string[], name: string, fallback: number): number {
+  const value = valueAfter(argv, name);
+  if (!value) return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) throw new MmiGatewayError(`${name} must be a non-negative number.`, "invalid_cli");
+  return parsed;
 }
 
 function wantsJson(argv: string[]): boolean {
@@ -285,6 +304,7 @@ function help(): string {
     "Commands:",
     "  mmi init [--config mmi.config.json] [--profile generic|agent|dashscope|openai-compatible] [--starter] [--json]",
     "  mmi ingest [--config mmi.config.json] [--provider manual|mock|dashscope] [--out dir] [--project-id id] [--prompt value] [--text value] [--file path] [--url url] [--sources file.json|file.jsonl] [--stdin-json|--stdin-jsonl] [--json]",
+    "  mmi ingest-project <folder> [--profile creative-project|field-video-project-base|visual-asset-library-only] [--out dir] [--dry-run] [--json]",
     "  mmi validate <packet-dir-or-packet.json>",
     "  mmi handoff <packet-dir-or-packet.json> [--json]",
     "  mmi explain <issue-code> [--json]",
@@ -351,6 +371,16 @@ function appendIssueLines(stdout: string[], issues: GatewayIssue[]): void {
 
 function isConfigProfile(value: string): value is ConfigProfile {
   return ["generic", "agent", "dashscope", "openai-compatible"].includes(value);
+}
+
+function isProjectIntakeProfile(value: string): value is ProjectIntakeProfile {
+  return ["creative-project", "creative_project_foundation", "field-video-project-base", "visual-asset-library-only"].includes(value);
+}
+
+function packetProfileForProject(profile: ProjectIntakeProfile): PacketProfile {
+  if (profile === "field-video-project-base") return "field_video_project_base";
+  if (profile === "visual-asset-library-only") return "visual_asset_library_only";
+  return "creative_project_foundation";
 }
 
 function enrichIssues(issues: GatewayIssue[]): Array<GatewayIssue & ReturnType<typeof recoveryForIssue>> {
@@ -486,6 +516,23 @@ async function runSelftest(): Promise<{
   const manifestRunDir = path.join(root, "manifest");
   const manifest = await runCli(["ingest", "--out", manifestRunDir, "--sources", manifestPath, "--json"]);
   checks.push({ id: "source_manifest", ok: manifest.exitCode === 0, detail: summarize(manifest) });
+
+  const projectRoot = path.join(root, "project");
+  await fs.mkdir(path.join(projectRoot, "photos"), { recursive: true });
+  await fs.mkdir(path.join(projectRoot, "video"), { recursive: true });
+  await fs.writeFile(path.join(projectRoot, "brief.md"), "# Selftest project\n\nLocal project intake smoke.", "utf8");
+  await fs.writeFile(
+    path.join(projectRoot, "photos", "photo.png"),
+    Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=", "base64"),
+  );
+  await fs.writeFile(path.join(projectRoot, "video", "clip.mp4"), Buffer.from("not a real video"));
+  const projectRunDir = path.join(projectRoot, ".mmi");
+  const project = await runCli(["ingest-project", projectRoot, "--out", projectRunDir, "--no-keyframes", "--json"]);
+  const projectReviewExists = await fs
+    .stat(path.join(projectRunDir, "human_review_surface.md"))
+    .then(() => true)
+    .catch(() => false);
+  checks.push({ id: "project_folder_intake", ok: project.exitCode === 0 && projectReviewExists, detail: summarize(project) });
 
   const secretPath = path.join(root, "secret-sources.json");
   await fs.writeFile(
@@ -629,6 +676,142 @@ export async function runCli(argv = process.argv.slice(2)): Promise<CliResult> {
     const resolvedConfigPath = configPath ? path.resolve(configPath) : await findConfig();
     const config = await readConfig(configPath);
     const gateway = createGateway(await gatewayConfigFromFileAsync(config, { baseDir: resolvedConfigPath ? path.dirname(resolvedConfigPath) : process.cwd() }));
+
+    if (command === "ingest-project" || command === "ingest-folder") {
+      const projectDir = argv[1] ?? valueAfter(argv, "--project-dir") ?? valueAfter(argv, "--folder");
+      if (!projectDir) return { exitCode: 2, stdout, stderr: ["missing project folder"] };
+      const projectRoot = path.resolve(projectDir);
+      const rawProfile = valueAfter(argv, "--profile") ?? "creative-project";
+      if (!isProjectIntakeProfile(rawProfile)) return { exitCode: 2, stdout, stderr: [`unsupported project intake profile: ${rawProfile}`] };
+      const provider = valueAfter(argv, "--provider") ?? "manual";
+      const outputDir = valueAfter(argv, "--out") ?? valueAfter(argv, "--output-dir") ?? path.join(projectRoot, ".mmi");
+      const include = valuesAfter(argv, "--include");
+      const exclude = valuesAfter(argv, "--exclude");
+      const discovery = await discoverProjectSources(projectRoot, {
+        include,
+        exclude,
+        maxFiles: numberAfter(argv, "--max-files", 2000),
+        maxFileBytes: numberAfter(argv, "--max-file-bytes", Number.MAX_SAFE_INTEGER),
+        maxTextBytes: numberAfter(argv, "--max-text-bytes", 1024 * 1024),
+        hashFiles: argv.includes("--hash-files"),
+        followSymlinks: argv.includes("--follow-symlinks"),
+        provider: "manual",
+      });
+      const okDiscovery = discovery.sources.length > 0;
+      if (argv.includes("--dry-run")) {
+        const plan = {
+          ok: okDiscovery,
+          command: "ingest-project",
+          mode: "dry-run-plan",
+          projectRoot,
+          outputDir,
+          profile: rawProfile,
+          selectedProvider: provider,
+          wouldCallProviders: false,
+          wouldWritePacket: false,
+          wouldWriteProjectIntake: false,
+          counts: {
+            sources: discovery.sources.length,
+            skipped: discovery.skipped.length,
+            ...discovery.counts,
+          },
+          sources: discovery.sources.slice(0, 200).map((source) => ({
+            id: source.id,
+            type: source.type,
+            relativePath: source.metadata.relativePath,
+            sizeBytes: source.metadata.sizeBytes,
+            hasInlineText: Boolean(source.text),
+          })),
+          skipped: discovery.skipped.slice(0, 200),
+          nextActions: [
+            {
+              id: "run_project_intake",
+              command: `mmi ingest-project ${shellArg(projectRoot)} --profile ${shellArg(rawProfile)} --out ${shellArg(outputDir)} --json`,
+              description: "Run the local-first project intake when the discovery plan looks correct.",
+              required: okDiscovery,
+            },
+          ],
+        };
+        if (wantsJson(argv)) stdout.push(jsonLine(plan));
+        else {
+          stdout.push(okDiscovery ? "MMI_PROJECT_DRY_RUN_PLAN_HELD" : "MMI_PROJECT_DRY_RUN_PLAN_ISSUES");
+          stdout.push(`project_root: ${projectRoot}`);
+          stdout.push(`sources: ${discovery.sources.length}`);
+          stdout.push(`images: ${discovery.counts.image}`);
+          stdout.push(`videos: ${discovery.counts.video}`);
+          stdout.push(`audio: ${discovery.counts.audio}`);
+          stdout.push(`documents: ${discovery.counts.document}`);
+        }
+        return { exitCode: okDiscovery ? 0 : 1, stdout, stderr };
+      }
+      const packetProfile = packetProfileForProject(rawProfile);
+      const result = await gateway.run({
+        sources: discovery.sources,
+        preflightIssues: okDiscovery ? [] : [issue("missing_source", "No supported project files were discovered.")],
+        provider,
+        outputDir,
+        projectId: valueAfter(argv, "--project-id") ?? path.basename(projectRoot),
+        prompt: valueAfter(argv, "--prompt"),
+        profile: packetProfile,
+        write: true,
+      });
+      const projectFiles = await writeProjectIntakeArtifacts(discovery, {
+        profile: rawProfile,
+        outputDir,
+        extractKeyframes: !argv.includes("--no-keyframes"),
+        extractAudio: argv.includes("--extract-audio"),
+        maxVideoWindows: numberAfter(argv, "--max-video-windows", 12),
+        maxKeyframes: numberAfter(argv, "--max-keyframes", 8),
+        maxAudioSeconds: numberAfter(argv, "--max-audio-seconds", 600),
+        noTruthPromotion: true,
+      });
+      const wrotePacket = result.filesWritten?.some((filePath) => path.basename(filePath) === "packet.json") ?? false;
+      const ok = okDiscovery && result.issues.length === 0 && wrotePacket;
+      if (wantsJson(argv)) {
+        stdout.push(
+          jsonLine({
+            ok,
+            command: "ingest-project",
+            projectRoot,
+            outputDir,
+            profile: rawProfile,
+            counts: {
+              sources: discovery.sources.length,
+              skipped: discovery.skipped.length,
+              evidenceAtoms: result.packet.evidenceAtoms.length,
+              claims: result.packet.claims.length,
+              reviewItems: result.packet.reviewItems.length,
+              issues: result.issues.length,
+              ...discovery.counts,
+            },
+            issues: enrichIssues(result.issues),
+            skipped: discovery.skipped.slice(0, 200),
+            packetPath: wrotePacket ? path.join(outputDir, "packet.json") : undefined,
+            projectManifestPath: path.join(outputDir, "project_intake_manifest.json"),
+            humanReviewSurfacePath: path.join(outputDir, "human_review_surface.md"),
+            blockerReportPath: path.join(outputDir, "gap_and_blocker_report.md"),
+            nextActions: [
+              { id: "review_surface", description: "Open human_review_surface.md and accept/edit/discard project atoms.", required: true },
+              { id: "validate", command: `mmi validate ${shellArg(outputDir)} --json`, description: "Validate the canonical candidate packet.", required: true },
+              { id: "handoff", command: `mmi handoff ${shellArg(outputDir)} --json`, description: "Load next-agent handoff.", required: false },
+            ],
+            filesWritten: [...(result.filesWritten ?? []), ...projectFiles],
+          }),
+        );
+        return { exitCode: ok ? 0 : 1, stdout, stderr };
+      }
+      stdout.push(ok ? "MMI_PROJECT_INGEST_HELD" : "MMI_PROJECT_INGEST_ISSUES");
+      stdout.push(`output_dir: ${outputDir}`);
+      stdout.push(`profile: ${rawProfile}`);
+      stdout.push(`sources: ${discovery.sources.length}`);
+      stdout.push(`images: ${discovery.counts.image}`);
+      stdout.push(`videos: ${discovery.counts.video}`);
+      stdout.push(`audio: ${discovery.counts.audio}`);
+      stdout.push(`documents: ${discovery.counts.document}`);
+      stdout.push(`review_surface: ${path.join(outputDir, "human_review_surface.md")}`);
+      appendIssueLines(stdout, result.issues);
+      return { exitCode: ok ? 0 : 1, stdout, stderr };
+    }
 
     if (command === "providers") {
       if (wantsJson(argv)) {

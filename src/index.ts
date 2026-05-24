@@ -24,6 +24,16 @@ export {
 } from "./errors.ts";
 export { validateSafetyInvariants, validateProviderObservation } from "./invariants.ts";
 export { readCandidatePacket, writeCandidatePacket, type CandidatePacketWriteOptions } from "./packet-io.ts";
+export { writeProjectIntakeArtifacts, type ProjectIntakeOptions, type ProjectIntakeProfile } from "./project-intake.ts";
+export {
+  discoverProjectSources,
+  inferSourceTypeFromPath,
+  isTextReadableProjectFile,
+  type DiscoveredSource,
+  type DiscoverySkippedItem,
+  type ProjectDiscoveryOptions,
+  type ProjectDiscoveryResult,
+} from "./source-discovery.ts";
 export { readPacket, writePacket } from "./writer.ts";
 export { validateCandidatePacket } from "./safety.ts";
 export {

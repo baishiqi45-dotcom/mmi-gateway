@@ -48,6 +48,17 @@ jobs:
       - run: node dist/cli.js doctor
       - run: node dist/cli.js selftest --json
       - run: node dist/cli.js recipes --json
+      - name: Test local project folder intake
+        run: |
+          set -euo pipefail
+          mkdir -p tmp/ci-project/photos tmp/ci-project/video
+          printf '# CI project\n\nLocal folder intake smoke.\n' > tmp/ci-project/brief.md
+          node -e "require('fs').writeFileSync('tmp/ci-project/photos/photo.png', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=', 'base64'))"
+          printf 'not a real video' > tmp/ci-project/video/clip.mp4
+          node dist/cli.js ingest-project tmp/ci-project --out tmp/ci-project/.mmi --no-keyframes --json
+          node dist/cli.js validate tmp/ci-project/.mmi --json
+          test -f tmp/ci-project/.mmi/human_review_surface.md
+          test -f tmp/ci-project/.mmi/video_window_review_matrix.json
       - run: npm pack --dry-run
       - name: Test packed package as a consumer
         if: matrix.node-version == '24'
@@ -74,6 +85,14 @@ jobs:
           npx mmi ingest --out ./run --text "tarball consumer smoke" --json
           npx mmi validate ./run --json
           npx mmi handoff ./run --json
+          mkdir -p ./project/photos ./project/video
+          printf '# Consumer project\n\nLocal project intake smoke.\n' > ./project/brief.md
+          node -e "require('fs').writeFileSync('./project/photos/photo.png', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=', 'base64'))"
+          printf 'not a real video' > ./project/video/clip.mp4
+          npx mmi ingest-project ./project --out ./project/.mmi --no-keyframes --json
+          npx mmi validate ./project/.mmi --json
+          test -f ./project/.mmi/project_intake_manifest.json
+          test -f ./project/.mmi/human_review_surface.md
           npx mmi explain secret_leak_risk --json
           npx mmi schema --kind source-manifest >/tmp/mmi-source-manifest.schema.json
           test -f node_modules/@mmi/gateway/docs/RECIPES.md

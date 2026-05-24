@@ -12,7 +12,7 @@
     },
     "gatewayVersion": {
       "type": "string",
-      "const": "0.3.0"
+      "const": "0.4.0"
     },
     "status": {
       "type": "string",
@@ -205,6 +205,77 @@
               "range": {
                 "type": "string",
                 "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "whole_source",
+                  "file_pointer",
+                  "text_range",
+                  "timecode",
+                  "image_region"
+                ]
+              },
+              "startMs": {
+                "type": "number",
+                "minimum": 0
+              },
+              "endMs": {
+                "type": "number",
+                "minimum": 0
+              },
+              "lineStart": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "lineEnd": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "page": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "frameId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "region": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "width": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "height": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "unit": {
+                    "type": "string",
+                    "enum": [
+                      "pixel",
+                      "ratio"
+                    ]
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "width",
+                  "height",
+                  "unit"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [
@@ -446,7 +517,6 @@
                 ]
               },
               "evidenceAtomIds": {
-                "minItems": 1,
                 "type": "array",
                 "items": {
                   "type": "string",

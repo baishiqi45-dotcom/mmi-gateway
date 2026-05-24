@@ -1,6 +1,6 @@
 export const MMI_GATEWAY_PACKET_SCHEMA = "mmi.gateway.packet" as const;
 export const MMI_GATEWAY_PACKET_SCHEMA_VERSION = "1.0.0" as const;
-export const MMI_GATEWAY_PACKAGE_VERSION = "0.3.0" as const;
+export const MMI_GATEWAY_PACKAGE_VERSION = "0.4.0" as const;
 
 export const REQUIRED_NON_CLAIMS = [
   "not_source_truth",
@@ -23,7 +23,7 @@ export type SourceType =
 
 export type ReviewStatus = "needs_review" | "blocked" | "rejected";
 export type ExecutionMode = "local_manual" | "provider_probe" | "mixed";
-export type PacketProfile = "generic";
+export type PacketProfile = "generic" | "creative_project_foundation" | "field_video_project_base" | "visual_asset_library_only";
 
 export type ProviderCapability = {
   sourceTypes: SourceType[];
@@ -247,6 +247,20 @@ export type EvidenceAtom = {
   locator: {
     uri: string;
     range: string;
+    kind?: "whole_source" | "file_pointer" | "text_range" | "timecode" | "image_region";
+    startMs?: number;
+    endMs?: number;
+    lineStart?: number;
+    lineEnd?: number;
+    page?: number;
+    frameId?: string;
+    region?: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      unit: "pixel" | "ratio";
+    };
   };
   content: string;
   extractionMethod: string;

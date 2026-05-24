@@ -18,6 +18,7 @@ export async function writeCandidatePacket(
 ): Promise<string[]> {
   const root = path.resolve(outputDir);
   await fs.mkdir(root, { recursive: true });
+  await fs.rm(path.join(root, "run_error.json"), { force: true });
   const issues = options.issues ?? [];
   const profile = options.profile ?? "generic";
   const manifest: CandidatePacketOutputManifest = {

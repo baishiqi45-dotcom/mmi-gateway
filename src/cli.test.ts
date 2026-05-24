@@ -8,6 +8,22 @@ async function tmpDir(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), "mmi-cli-"));
 }
 
+async function writeFixtureProject(root: string): Promise<void> {
+  await fs.mkdir(path.join(root, "photos"), { recursive: true });
+  await fs.mkdir(path.join(root, "video"), { recursive: true });
+  await fs.mkdir(path.join(root, ".git"), { recursive: true });
+  await fs.writeFile(path.join(root, "brief.md"), "# Specimen Studio\n\nProject note for local intake.\n", "utf8");
+  await fs.writeFile(
+    path.join(root, "photos", "specimen-table.png"),
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+      "base64",
+    ),
+  );
+  await fs.writeFile(path.join(root, "video", "walkthrough.mp4"), Buffer.from("not a real video"));
+  await fs.writeFile(path.join(root, ".git", "ignored.md"), "ignored", "utf8");
+}
+
 describe("mmi CLI", () => {
   it("prints doctor output with default providers", async () => {
     const result = await runCli(["doctor"]);
@@ -87,6 +103,7 @@ describe("mmi CLI", () => {
     expect(parsed.checks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: "ingest_json", ok: true }),
+        expect.objectContaining({ id: "project_folder_intake", ok: true }),
         expect.objectContaining({ id: "secret_fail_closed", ok: true }),
       ]),
     );
@@ -318,6 +335,73 @@ describe("mmi CLI", () => {
       wouldCallProviders: false,
       selectedProvider: "openai-compatible",
     });
+  });
+
+  it("discovers a mixed project folder without a hand-built source manifest", async () => {
+    const projectRoot = await tmpDir();
+    await writeFixtureProject(projectRoot);
+
+    const result = await runCli(["ingest-project", projectRoot, "--dry-run", "--json"]);
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout.join("\n")) as {
+      command: string;
+      mode: string;
+      counts: { sources: number; image: number; video: number; document: number };
+      sources: Array<{ relativePath: string; type: string }>;
+      skipped: Array<{ path: string; reason: string }>;
+    };
+    expect(parsed).toMatchObject({
+      command: "ingest-project",
+      mode: "dry-run-plan",
+      counts: { sources: 3, image: 1, video: 1, document: 1 },
+    });
+    expect(parsed.sources).toEqual(expect.arrayContaining([expect.objectContaining({ relativePath: "brief.md" })]));
+    expect(parsed.skipped).toEqual(expect.arrayContaining([expect.objectContaining({ path: ".git", reason: "ignored_dir" })]));
+  });
+
+  it("writes project intake artifacts that are useful before provider perception", async () => {
+    const projectRoot = await tmpDir();
+    await writeFixtureProject(projectRoot);
+    const outputDir = path.join(projectRoot, ".mmi");
+
+    const result = await runCli(["ingest-project", projectRoot, "--out", outputDir, "--no-keyframes", "--json"]);
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout.join("\n")) as {
+      ok: boolean;
+      projectManifestPath: string;
+      humanReviewSurfacePath: string;
+      blockerReportPath: string;
+      filesWritten: string[];
+    };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.filesWritten).toEqual(
+      expect.arrayContaining([
+        path.join(outputDir, "project_intake_manifest.json"),
+        path.join(outputDir, "visual_asset_library.json"),
+        path.join(outputDir, "video_window_review_matrix.json"),
+        path.join(outputDir, "atoms.ndjson"),
+        path.join(outputDir, "human_review_surface.md"),
+        path.join(outputDir, "project_foundation_candidate.json"),
+      ]),
+    );
+    await expect(fs.stat(path.join(outputDir, "packet.json"))).resolves.toBeDefined();
+    const manifest = JSON.parse(await fs.readFile(parsed.projectManifestPath, "utf8")) as {
+      status: string;
+      boundary: { providerUpload: string; noTruthPromotion: boolean };
+      entrypoints: { humanReviewSurface: string };
+    };
+    expect(manifest).toMatchObject({
+      status: "candidate_review_required",
+      boundary: { providerUpload: "blocked_by_default", noTruthPromotion: true },
+      entrypoints: { humanReviewSurface: "human_review_surface.md" },
+    });
+    const reviewSurface = await fs.readFile(parsed.humanReviewSurfacePath, "utf8");
+    expect(reviewSurface).toContain("First Visual Review");
+    expect(reviewSurface).toContain("First Video Window Review");
+    const blockerReport = await fs.readFile(parsed.blockerReportPath, "utf8");
+    expect(blockerReport).toContain("Local private media was not uploaded automatically");
   });
 
   it("returns a machine-readable handoff summary", async () => {

@@ -31,6 +31,18 @@ npx mmi handoff ./run --json
 npx mmi recipes --json
 ```
 
+## GitHub Install Smoke
+
+The repository does not track `dist/`. The package `prepare` script must keep
+GitHub installs runnable:
+
+```bash
+TMP="$(mktemp -d)"
+cd "$TMP"
+npm install -g github:baishiqi45-dotcom/mmi-gateway
+mmi selftest --json
+```
+
 ## Trusted Publishing
 
 For public npm release, prefer npm trusted publishing with GitHub Actions OIDC
@@ -40,16 +52,18 @@ repository identity is known.
 The included workflow publishes on tags that match:
 
 ```bash
-git tag mmi-gateway-v0.3.0
-git push origin mmi-gateway-v0.3.0
+git tag mmi-gateway-v0.7.1
+git push origin mmi-gateway-v0.7.1
 ```
+
+Use `v0.7.1` for a GitHub-only release that should not trigger npm publish.
 
 Expected release protections:
 
 - CI runs typecheck, tests, build, pack dry-run, and consumer smoke.
 - npm publishes with provenance.
-- Confirm the `@mmi/gateway` npm scope/name is owned and available before
-  tagging the first public release.
+- Confirm the `mmi-gateway` npm package name is still available before tagging
+  the first public npm release.
 - The packed package includes `dist/`, `schemas/`, `docs/`, `examples/`, CLI
   bin metadata, and no `.env`, `.key`, credential, or temporary files.
 - No real provider API keys, live signed URLs, private paths, or customer data

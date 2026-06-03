@@ -5,9 +5,9 @@ Create `mmi.config.json` with `mmi init` or by hand.
 Starter profiles:
 
 ```bash
-npx @mmi/gateway init --profile agent --config ./mmi.config.json
-npx @mmi/gateway init --profile dashscope --config ./mmi.config.json
-npx @mmi/gateway init --profile openai-compatible --config ./mmi.config.json
+mmi init --profile agent --config ./mmi.config.json
+mmi init --profile dashscope --config ./mmi.config.json
+mmi init --profile openai-compatible --config ./mmi.config.json
 ```
 
 ```json
@@ -87,7 +87,7 @@ Use `--sources-json` when another tool already has a source manifest:
 ```
 
 ```bash
-npx @mmi/gateway ingest --sources-json ./sources.json --out ./mmi-run --json
+mmi ingest --sources-json ./sources.json --out ./mmi-run --json
 ```
 
 The CLI also accepts `--sources ./sources.jsonl`, `--stdin-json`, and
@@ -97,7 +97,7 @@ best fit for agent pipelines that already stream source records.
 Print the machine-readable contract with:
 
 ```bash
-npx @mmi/gateway schema --kind source-manifest
+mmi schema --kind source-manifest
 ```
 
 See `docs/SOURCE_MANIFEST_RECIPE.md` and `examples/source-manifest/` for object,
@@ -126,5 +126,5 @@ The module must export a `ProviderAdapter` object or a factory returning one.
 It must set `apiVersion: 1`; mismatched ids or versions fail during `doctor`.
 
 ```bash
-npx @mmi/gateway doctor --config ./mmi.config.json --json
+mmi doctor --config ./mmi.config.json --json
 ```

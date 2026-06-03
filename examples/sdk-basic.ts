@@ -1,4 +1,4 @@
-import { createGateway, createManualProvider } from "@mmi/gateway";
+import { createGateway, createManualProvider } from "mmi-gateway";
 
 const gateway = createGateway({
   defaultProvider: "manual",

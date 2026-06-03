@@ -1,4 +1,4 @@
-import { createGateway, createMockProvider, createSignedUrlStorageBoundaryPlugins } from "@mmi/gateway";
+import { createGateway, createMockProvider, createSignedUrlStorageBoundaryPlugins } from "mmi-gateway";
 
 const gateway = createGateway({
   defaultProvider: "mock",

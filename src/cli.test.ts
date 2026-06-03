@@ -43,12 +43,14 @@ describe("mmi CLI", () => {
 
   it("prints a package version that issue reporters can paste", async () => {
     const result = await runCli(["--version", "--json"]);
+    const packageJson = JSON.parse(await fs.readFile(path.join(process.cwd(), "package.json"), "utf8")) as { version: string };
 
     expect(result.exitCode).toBe(0);
     const parsed = JSON.parse(result.stdout.join("\n")) as { schema: string; name: string; version: string; data: { version: string } };
     expect(parsed).toMatchObject({
       schema: "mmi.gateway.cli_result",
-      name: "@mmi/gateway",
+      name: "mmi-gateway",
+      version: packageJson.version,
     });
     expect(parsed.version).toMatch(/^\d+\.\d+\.\d+/);
     expect(parsed.data.version).toBe(parsed.version);

@@ -20,7 +20,7 @@ export type CliResult = {
   stderr: string[];
 };
 
-const MMI_GATEWAY_PACKAGE_NAME = "@mmi/gateway" as const;
+const MMI_GATEWAY_PACKAGE_NAME = "mmi-gateway" as const;
 const STARTER_SAMPLE_TEXT = [
   "# MMI starter source",
   "",

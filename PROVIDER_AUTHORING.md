@@ -5,7 +5,7 @@ Providers turn a normalized source into one candidate observation. They do not w
 ## Interface
 
 ```ts
-import type { ProviderAdapter } from "@mmi/gateway";
+import type { ProviderAdapter } from "mmi-gateway";
 
 export const provider: ProviderAdapter = {
   apiVersion: 1,

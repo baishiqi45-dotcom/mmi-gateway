@@ -1,15 +1,49 @@
 # Multimodal Intake Gateway
 
+[![CI](https://github.com/baishiqi45-dotcom/mmi-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/baishiqi45-dotcom/mmi-gateway/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://github.com/baishiqi45-dotcom/mmi-gateway/actions/workflows/scorecard.yml/badge.svg)](https://github.com/baishiqi45-dotcom/mmi-gateway/actions/workflows/scorecard.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Node >=20.19](https://img.shields.io/badge/node-%3E%3D20.19-brightgreen)](package.json)
+
 Provider-neutral intake for text, documents, web pages, images, audio, and video. MMI turns raw project material into a reviewable candidate packet without claiming source truth, project truth, or production readiness.
+
+Use it when an AI agent needs a clean first pass over messy project material
+before retrieval, planning, implementation, or human review.
 
 ## Why
 
 Most AI project workflows need the same first step: collect mixed inputs, preserve provenance, ask a model or manual reviewer for a candidate description, and stop before downstream systems treat that description as fact. MMI provides that boundary as a small TypeScript library and CLI.
 
+MMI is useful when you need to:
+
+- scan a local project folder without uploading private media by default
+- preserve provenance across text, documents, images, audio, video, and web sources
+- produce candidate observations, review queues, and agent handoff files
+- keep provider-specific responses out of downstream truth stores
+- give the next agent a structured packet instead of a vague summary
+
+If MMI saves you an intake or source-review step, please star the repository so
+other agent builders can find it.
+
 ## Install
 
+GitHub install works immediately:
+
 ```bash
-npm install @mmi/gateway
+npm install -g github:baishiqi45-dotcom/mmi-gateway
+mmi selftest --json
+```
+
+One-off run without a global install:
+
+```bash
+npm exec --package github:baishiqi45-dotcom/mmi-gateway -- mmi selftest --json
+```
+
+NPM install path after the first public package publish:
+
+```bash
+npm install mmi-gateway
 ```
 
 For source checkout development:
@@ -26,13 +60,13 @@ npm run build
 Local project-folder intake, no API key:
 
 ```bash
-npx @mmi/gateway ingest-project ./my-project \
+mmi ingest-project ./my-project \
   --profile creative-project \
   --out ./my-project/.mmi \
   --dry-run \
   --json
 
-npx @mmi/gateway ingest-project ./my-project \
+mmi ingest-project ./my-project \
   --profile creative-project \
   --out ./my-project/.mmi \
   --json
@@ -65,7 +99,7 @@ When the receiving agent can inspect images/video locally, use the agent-first
 perception bundle instead of uploading long media to a provider:
 
 ```bash
-npx @mmi/gateway perceive ./my-project/.mmi --json
+mmi perceive ./my-project/.mmi --json
 ```
 
 This writes `.mmi/perception/agent_review_targets.jsonl`,
@@ -77,13 +111,13 @@ For speech extraction with DashScope Paraformer, provide reviewed HTTP(S) or
 OSS URLs for selected audio/video targets:
 
 ```bash
-npx @mmi/gateway perceive ./my-project/.mmi \
+mmi perceive ./my-project/.mmi \
   --asr \
   --target-type video_window \
   --url-map ./urls.jsonl \
   --json
 
-npx @mmi/gateway asr fetch ./my-project/.mmi --wait --json
+mmi asr fetch ./my-project/.mmi --wait --json
 ```
 
 `mmi asr fetch` reads `.mmi/perception/asr_tasks.jsonl`, polls task state when
@@ -98,7 +132,7 @@ Use Qwen visual perception only as an explicit fallback, for example when the
 next agent cannot view the media itself:
 
 ```bash
-npx @mmi/gateway perceive ./my-project/.mmi \
+mmi perceive ./my-project/.mmi \
   --visual-provider dashscope \
   --target-type image \
   --allow-local-media \
@@ -109,8 +143,8 @@ npx @mmi/gateway perceive ./my-project/.mmi \
 After a project intake run, another agent can start with:
 
 ```bash
-npx @mmi/gateway review ./my-project/.mmi --json
-npx @mmi/gateway review ./my-project/.mmi \
+mmi review ./my-project/.mmi --json
+mmi review ./my-project/.mmi \
   --decisions ./my-project/.mmi/review_decisions.template.jsonl \
   --json
 ```
@@ -122,14 +156,14 @@ without mutating `packet.json`.
 One-minute starter path:
 
 ```bash
-npx @mmi/gateway init --starter --profile agent --config ./my-project/mmi.config.json --json
-npx @mmi/gateway doctor --config ./my-project/mmi.config.json --json
-npx @mmi/gateway ingest --config ./my-project/mmi.config.json \
+mmi init --starter --profile agent --config ./my-project/mmi.config.json --json
+mmi doctor --config ./my-project/mmi.config.json --json
+mmi ingest --config ./my-project/mmi.config.json \
   --out ./my-project/mmi-runs/starter-run \
   --file ./my-project/sources/starter.md \
   --json
-npx @mmi/gateway validate ./my-project/mmi-runs/starter-run --json
-npx @mmi/gateway handoff ./my-project/mmi-runs/starter-run --json
+mmi validate ./my-project/mmi-runs/starter-run --json
+mmi handoff ./my-project/mmi-runs/starter-run --json
 ```
 
 The starter/manual path does not call an external provider and does not need an
@@ -139,7 +173,7 @@ and an `agent_handoff.md` that says the packet is candidate-only.
 Agent-safe dry run before provider dispatch:
 
 ```bash
-npx @mmi/gateway ingest --config ./my-project/mmi.config.json \
+mmi ingest --config ./my-project/mmi.config.json \
   --sources ./sources.jsonl \
   --out ./my-project/mmi-runs/run-001 \
   --dry-run \
@@ -173,7 +207,7 @@ If `ok` is false, read `issues`, then run `mmi explain <issue-code> --json`.
 For copy-paste paths, run:
 
 ```bash
-npx @mmi/gateway recipes --json
+mmi recipes --json
 ```
 
 ## Provider Model
@@ -206,7 +240,7 @@ or export the variables directly. Never put API keys in `mmi.config.json`.
 Providers implement one interface:
 
 ```ts
-import type { ProviderAdapter } from "@mmi/gateway";
+import type { ProviderAdapter } from "mmi-gateway";
 
 export const myProvider: ProviderAdapter = {
   apiVersion: 1,
@@ -233,7 +267,7 @@ export const myProvider: ProviderAdapter = {
 ## Use As A Library
 
 ```ts
-import { createGateway, createManualProvider } from "@mmi/gateway";
+import { createGateway, createManualProvider } from "mmi-gateway";
 
 const gateway = createGateway({
   defaultProvider: "manual",
@@ -282,15 +316,16 @@ simple: deleting an integration should not break core provider tests.
 - [Error Codes](docs/ERROR_CODES.md)
 - [Open Source Readiness](docs/OPEN_SOURCE_READINESS.md)
 - [Release Guide](docs/RELEASE.md)
+- [Promotion Plan](docs/PROMOTION.md)
 - [Security](SECURITY.md)
 - [Contributing](CONTRIBUTING.md)
 
 Schema imports:
 
-- `@mmi/gateway/schema` exports the TypeScript/Zod schema helpers.
-- `@mmi/gateway/schema.json` exports the versioned JSON Schema file.
-- `@mmi/gateway/source-manifest.schema.json` exports the source manifest schema.
-- `@mmi/gateway/cli-result.schema.json` exports the CLI JSON response schema.
+- `mmi-gateway/schema` exports the TypeScript/Zod schema helpers.
+- `mmi-gateway/schema.json` exports the versioned JSON Schema file.
+- `mmi-gateway/source-manifest.schema.json` exports the source manifest schema.
+- `mmi-gateway/cli-result.schema.json` exports the CLI JSON response schema.
 
 Helpful CLI utilities:
 

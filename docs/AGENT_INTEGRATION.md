@@ -7,11 +7,11 @@ This guide is for agents and automation scripts that need a stable contract.
 For a messy local project folder, start here:
 
 ```bash
-npx @mmi/gateway ingest-project ./project --out ./project/.mmi --dry-run --json
-npx @mmi/gateway ingest-project ./project --out ./project/.mmi --json
-npx @mmi/gateway perceive ./project/.mmi --json
-npx @mmi/gateway review ./project/.mmi --json
-npx @mmi/gateway validate ./project/.mmi --json
+mmi ingest-project ./project --out ./project/.mmi --dry-run --json
+mmi ingest-project ./project --out ./project/.mmi --json
+mmi perceive ./project/.mmi --json
+mmi review ./project/.mmi --json
+mmi validate ./project/.mmi --json
 ```
 
 Read `START_HERE.md`, `project_intake_manifest.json`,
@@ -21,24 +21,24 @@ raw folder again.
 For an already curated source manifest:
 
 ```bash
-npx @mmi/gateway doctor --json
-npx @mmi/gateway selftest --json
-npx @mmi/gateway ingest --sources-json ./sources.json --out ./mmi-run --dry-run --json
-npx @mmi/gateway ingest --sources-json ./sources.json --out ./mmi-run --json
-npx @mmi/gateway validate ./mmi-run --json
-npx @mmi/gateway handoff ./mmi-run --json
+mmi doctor --json
+mmi selftest --json
+mmi ingest --sources-json ./sources.json --out ./mmi-run --dry-run --json
+mmi ingest --sources-json ./sources.json --out ./mmi-run --json
+mmi validate ./mmi-run --json
+mmi handoff ./mmi-run --json
 ```
 
 Discover copy-pasteable flows with:
 
 ```bash
-npx @mmi/gateway recipes --json
+mmi recipes --json
 ```
 
 For stream-oriented callers, `--sources` and `--stdin-jsonl` also accept JSONL:
 
 ```bash
-jq -c '.sources[]' sources.json | npx @mmi/gateway ingest --stdin-jsonl --out ./mmi-run --json
+jq -c '.sources[]' sources.json | mmi ingest --stdin-jsonl --out ./mmi-run --json
 ```
 
 ## What To Read
@@ -68,7 +68,7 @@ Use `mmi perceive` after `ingest-project` when the next agent needs a tighter
 review bundle:
 
 ```bash
-npx @mmi/gateway perceive ./project/.mmi --json
+mmi perceive ./project/.mmi --json
 ```
 
 Default mode is `agent_review_first`. It reads `top_review_targets.jsonl` and
@@ -91,13 +91,13 @@ provider just to duplicate what the receiving agent can already inspect.
 Use ASR only when you have reviewed remote URLs:
 
 ```bash
-npx @mmi/gateway perceive ./project/.mmi \
+mmi perceive ./project/.mmi \
   --asr \
   --target-type video_window \
   --url-map ./urls.jsonl \
   --json
 
-npx @mmi/gateway asr fetch ./project/.mmi --wait --json
+mmi asr fetch ./project/.mmi --wait --json
 ```
 
 `urls.jsonl` can map either `sourceId` or `targetId`:
@@ -118,7 +118,7 @@ Use visual provider fallback only when the receiving agent cannot inspect media
 itself, or when the user explicitly wants provider perception:
 
 ```bash
-npx @mmi/gateway perceive ./project/.mmi \
+mmi perceive ./project/.mmi \
   --visual-provider dashscope \
   --target-type image \
   --limit 3 \
@@ -153,7 +153,7 @@ For plain `ingest`:
 The project intake queue is intentionally file-based:
 
 ```bash
-npx @mmi/gateway review ./project/.mmi --json
+mmi review ./project/.mmi --json
 ```
 
 Fill `review_decisions.template.jsonl` with:
@@ -168,7 +168,7 @@ Fill `review_decisions.template.jsonl` with:
 Then run:
 
 ```bash
-npx @mmi/gateway review ./project/.mmi \
+mmi review ./project/.mmi \
   --decisions ./project/.mmi/review_decisions.template.jsonl \
   --json
 ```
@@ -182,7 +182,7 @@ This writes `review_decision_summary.json`, `accepted_atoms.jsonl`,
 When a JSON response has `ok: false`, inspect `issues`.
 
 ```bash
-npx @mmi/gateway explain <issue-code> --json
+mmi explain <issue-code> --json
 ```
 
 Every issue object includes `severity` and `recovery`. Prefer fixing the
@@ -196,7 +196,7 @@ Use a source manifest when another system already owns IDs, privacy, rights, or
 metadata.
 
 ```bash
-npx @mmi/gateway schema --kind source-manifest > source-manifest.schema.json
+mmi schema --kind source-manifest > source-manifest.schema.json
 ```
 
 The gateway accepts either:
@@ -210,8 +210,8 @@ callers.
 
 Published schemas:
 
-- `@mmi/gateway/source-manifest.schema.json`
-- `@mmi/gateway/cli-result.schema.json`
-- `@mmi/gateway/schema.json`
+- `mmi-gateway/source-manifest.schema.json`
+- `mmi-gateway/cli-result.schema.json`
+- `mmi-gateway/schema.json`
 
 Exit codes are documented in `docs/EXIT_CODES.md`.

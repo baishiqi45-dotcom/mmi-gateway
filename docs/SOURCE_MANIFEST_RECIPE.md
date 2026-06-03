@@ -46,8 +46,8 @@ routing, and metadata stable.
 Run:
 
 ```bash
-npx @mmi/gateway schema --kind source-manifest > source-manifest.schema.json
-npx @mmi/gateway ingest --sources ./sources.jsonl --out ./mmi-runs/source-manifest-run --json
+mmi schema --kind source-manifest > source-manifest.schema.json
+mmi ingest --sources ./sources.jsonl --out ./mmi-runs/source-manifest-run --json
 ```
 
 Avoid duplicate `id` values. Keep local private file paths pointer-only unless a

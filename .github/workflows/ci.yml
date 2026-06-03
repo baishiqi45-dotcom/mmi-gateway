@@ -95,8 +95,8 @@ jobs:
           test -f ./project/.mmi/human_review_surface.md
           npx mmi explain secret_leak_risk --json
           npx mmi schema --kind source-manifest >/tmp/mmi-source-manifest.schema.json
-          test -f node_modules/@mmi/gateway/docs/RECIPES.md
-          cp -R node_modules/@mmi/gateway/examples/custom-provider-module ./custom-provider-module
+          test -f node_modules/mmi-gateway/docs/RECIPES.md
+          cp -R node_modules/mmi-gateway/examples/custom-provider-module ./custom-provider-module
           npx mmi doctor --config ./custom-provider-module/mmi.config.json --json
           npx mmi ingest --config ./custom-provider-module/mmi.config.json --sources ./custom-provider-module/sources.jsonl --out ./module-run --json
           npx mmi validate ./module-run --json

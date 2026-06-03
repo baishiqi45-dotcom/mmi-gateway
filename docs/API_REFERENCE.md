@@ -5,7 +5,7 @@
 Creates a reusable gateway instance.
 
 ```ts
-import { createGateway, createManualProvider } from "@mmi/gateway";
+import { createGateway, createManualProvider } from "mmi-gateway";
 
 const gateway = createGateway({
   defaultProvider: "manual",
@@ -41,7 +41,7 @@ Agents should read `gateway_manifest.json` first.
 ## Project Folder Intake Helpers
 
 ```ts
-import { discoverProjectSources, writeProjectIntakeArtifacts } from "@mmi/gateway";
+import { discoverProjectSources, writeProjectIntakeArtifacts } from "mmi-gateway";
 
 const discovery = await discoverProjectSources("./project");
 
@@ -63,7 +63,7 @@ generated artifacts, and project-note sidecars.
 ## Project Review Decisions
 
 ```ts
-import { applyReviewDecisions, summarizeReviewQueue } from "@mmi/gateway";
+import { applyReviewDecisions, summarizeReviewQueue } from "mmi-gateway";
 
 const queue = await summarizeReviewQueue("./project/.mmi");
 const summary = await applyReviewDecisions("./project/.mmi", "./project/.mmi/review_decisions.template.jsonl");
@@ -75,7 +75,7 @@ The review decision helper writes summaries such as `accepted_atoms.jsonl` and
 ## Project Perception Helper
 
 ```ts
-import { runProjectPerception } from "@mmi/gateway";
+import { runProjectPerception } from "mmi-gateway";
 
 const result = await runProjectPerception("./project/.mmi", {
   asr: true,
@@ -98,7 +98,7 @@ uploaded.
 Fetch completed ASR transcripts separately:
 
 ```ts
-import { runAsrTaskFetch } from "@mmi/gateway";
+import { runAsrTaskFetch } from "mmi-gateway";
 
 const result = await runAsrTaskFetch("./project/.mmi", {
   wait: true,
@@ -134,7 +134,7 @@ All `--json` CLI responses include:
 Issue arrays include `severity` and `recovery` fields so another agent can fix
 common failures without scraping human text.
 
-Use `@mmi/gateway/cli-result.schema.json` for external validation.
+Use `mmi-gateway/cli-result.schema.json` for external validation.
 
 ## `ProviderAdapter`
 
@@ -166,7 +166,7 @@ candidate-only safety invariants.
 ## Storage Adapter Helpers
 
 ```ts
-import { createGateway, createMockProvider, createSignedUrlStoragePlugin } from "@mmi/gateway";
+import { createGateway, createMockProvider, createSignedUrlStoragePlugin } from "mmi-gateway";
 
 const gateway = createGateway({
   defaultProvider: "mock",
@@ -191,7 +191,7 @@ from `packet.json` and `evidence_atoms.jsonl`. Signed URL metadata is also
 excluded from the packet unless you explicitly opt in:
 
 ```ts
-import { createGateway, createMockProvider, createSignedUrlStorageBoundaryPlugins } from "@mmi/gateway";
+import { createGateway, createMockProvider, createSignedUrlStorageBoundaryPlugins } from "mmi-gateway";
 
 const gateway = createGateway({
   defaultProvider: "mock",

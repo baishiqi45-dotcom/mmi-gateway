@@ -1,6 +1,6 @@
 {
-  "name": "@mmi/gateway",
-  "version": "0.7.0",
+  "name": "mmi-gateway",
+  "version": "0.7.1",
   "description": "Provider-neutral multimodal intake gateway for candidate evidence packets.",
   "type": "module",
   "license": "MIT",
@@ -71,6 +71,7 @@
     "doctor": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types src/cli.ts doctor",
     "ingest:example": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types src/cli.ts ingest --text \"Example project brief requiring source review\" --out tmp/example-run",
     "pack:dry-run": "npm pack --dry-run",
+    "prepare": "npm run build",
     "prepack": "npm run build",
     "prepublishOnly": "npm run typecheck && npm run test && npm run build && npm pack --dry-run",
     "schema:refresh": "node -e \"import('./dist/schema.js').then(({candidatePacketJsonSchema,sourceManifestJsonSchema})=>{const fs=require('node:fs');fs.writeFileSync('schemas/v1/candidate-packet.schema.json',JSON.stringify(candidatePacketJsonSchema(),null,2)+'\\n');fs.writeFileSync('schemas/v1/source-manifest.schema.json',JSON.stringify(sourceManifestJsonSchema(),null,2)+'\\n')})\"",

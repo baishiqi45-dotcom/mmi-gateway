@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.1
+
+- Renamed the public npm package path from `@mmi/gateway` to `mmi-gateway`.
+- Added a `prepare` build hook so GitHub installs can build the ignored `dist/`
+  output before exposing the `mmi` CLI.
+- Added README badges, GitHub install instructions, star call-to-action, and
+  a promotion plan for open-source launch outreach.
+
 ## 0.7.0
 
 - Added `mmi asr fetch|poll` to retrieve DashScope Paraformer task results and write review-required transcript sidecars.

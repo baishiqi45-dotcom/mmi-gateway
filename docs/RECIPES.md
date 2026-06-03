@@ -8,19 +8,19 @@ turning it into a workflow server.
 No API key, no network provider call:
 
 ```bash
-npx @mmi/gateway init --starter --profile agent --config ./mmi.config.json --json
-npx @mmi/gateway selftest --json
-npx @mmi/gateway ingest --config ./mmi.config.json \
+mmi init --starter --profile agent --config ./mmi.config.json --json
+mmi selftest --json
+mmi ingest --config ./mmi.config.json \
   --out ./mmi-runs/run-001 \
   --file ./sources/starter.md \
   --dry-run \
   --json
-npx @mmi/gateway ingest --config ./mmi.config.json \
+mmi ingest --config ./mmi.config.json \
   --out ./mmi-runs/run-001 \
   --file ./sources/starter.md \
   --json
-npx @mmi/gateway validate ./mmi-runs/run-001 --json
-npx @mmi/gateway handoff ./mmi-runs/run-001 --json
+mmi validate ./mmi-runs/run-001 --json
+mmi handoff ./mmi-runs/run-001 --json
 ```
 
 ## Agent JSONL Intake
@@ -30,7 +30,7 @@ Use JSONL when an agent already streams one source record per line:
 ```bash
 printf '%s\n' \
   '{"id":"brief","type":"text","text":"Project brief.","privacy":"synthetic","rights":"not_reviewed"}' \
-  | npx @mmi/gateway ingest --stdin-jsonl --out ./mmi-runs/jsonl-run --json
+  | mmi ingest --stdin-jsonl --out ./mmi-runs/jsonl-run --json
 ```
 
 Read `gateway_manifest.json` first, then `issues.json`, then `agent_handoff.md`.
@@ -41,13 +41,13 @@ Use this when the useful first step is "open this messy project folder" rather
 than "consume a hand-built source manifest":
 
 ```bash
-npx @mmi/gateway ingest-project ./my-project \
+mmi ingest-project ./my-project \
   --profile creative-project \
   --out ./my-project/.mmi \
   --dry-run \
   --json
 
-npx @mmi/gateway ingest-project ./my-project \
+mmi ingest-project ./my-project \
   --profile creative-project \
   --out ./my-project/.mmi \
   --json
@@ -73,8 +73,8 @@ Keyframe extraction is opt-in with `--extract-keyframes`.
 To turn review into structured files:
 
 ```bash
-npx @mmi/gateway review ./my-project/.mmi --json
-npx @mmi/gateway review ./my-project/.mmi \
+mmi review ./my-project/.mmi --json
+mmi review ./my-project/.mmi \
   --decisions ./my-project/.mmi/review_decisions.template.jsonl \
   --json
 ```
@@ -86,7 +86,7 @@ itself and mainly needs a good target list, transcript sidecars, ASR blockers,
 and optional keyframes:
 
 ```bash
-npx @mmi/gateway perceive ./my-project/.mmi --json
+mmi perceive ./my-project/.mmi --json
 ```
 
 This writes `.mmi/perception/agent_review_targets.jsonl` and does not call a
@@ -96,13 +96,13 @@ For audio or speech extraction through DashScope Paraformer, give MMI reviewed
 remote URLs:
 
 ```bash
-npx @mmi/gateway perceive ./my-project/.mmi \
+mmi perceive ./my-project/.mmi \
   --asr \
   --target-type video_window \
   --url-map ./urls.jsonl \
   --json
 
-npx @mmi/gateway asr fetch ./my-project/.mmi --wait --json
+mmi asr fetch ./my-project/.mmi --wait --json
 ```
 
 Example `urls.jsonl`:
@@ -119,7 +119,7 @@ Fetched transcripts are also added back into `transcript_sidecars.jsonl` and
 When the receiving agent cannot see media, add an explicit visual fallback:
 
 ```bash
-npx @mmi/gateway perceive ./my-project/.mmi \
+mmi perceive ./my-project/.mmi \
   --visual-provider dashscope \
   --target-type image \
   --limit 3 \
@@ -137,7 +137,7 @@ local private media paths:
 ```
 
 ```bash
-npx @mmi/gateway ingest --sources ./sources.jsonl --out ./mmi-runs/media-run --json
+mmi ingest --sources ./sources.jsonl --out ./mmi-runs/media-run --json
 ```
 
 ## Custom Provider Module

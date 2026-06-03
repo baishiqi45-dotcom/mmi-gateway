@@ -6,6 +6,8 @@ This package is structured so it can become a standalone open-source project.
 
 - Standalone TypeScript package boundary at the repository root.
 - MIT license.
+- Public package name set to `mmi-gateway` with the `mmi` CLI bin.
+- GitHub install path supported through the `prepare` build hook.
 - CLI with `init`, `init --starter`, `doctor`, `providers`, `ingest`,
   `ingest-project`, `perceive`, `asr fetch|poll`, `review`, and `validate`.
 - CLI recipe discovery with `mmi recipes --json`.

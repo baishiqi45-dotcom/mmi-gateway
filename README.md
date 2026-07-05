@@ -7,6 +7,10 @@
 
 Provider-neutral intake for text, documents, web pages, images, audio, and video. MMI turns raw project material into a reviewable candidate packet without claiming source truth, project truth, or production readiness.
 
+> **Status:** reference slice. MMI is one intake component behind a broader AI
+> production-control workflow. It is not the main product, not a project truth
+> store, and not a production-readiness claim.
+
 Use it when an AI agent needs a clean first pass over messy project material
 before retrieval, planning, implementation, or human review.
 
@@ -22,8 +26,8 @@ MMI is useful when you need to:
 - keep provider-specific responses out of downstream truth stores
 - give the next agent a structured packet instead of a vague summary
 
-If MMI saves you an intake or source-review step, please star the repository so
-other agent builders can find it.
+If you reuse the pattern, keep the same boundary: intake creates review
+material, not accepted project truth.
 
 ## Install
 
